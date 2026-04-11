@@ -1,0 +1,30 @@
+{
+  "name": "ide-navigator",
+  "displayName": "IDE Navigator",
+  "description": "Static analysis navigation plugin: Go to Definition, References, Outline, Call Graph",
+  "version": "0.1.0",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Programming Languages"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "ide-navigator.showCallGraph",
+        "title": "IDE Navigator: Show Call Graph"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "@types/vscode": "^1.115.0",
+    "typescript": "^6.0.2",
+    "vscode-languageclient": "^9.0.1"
+  }
+}
