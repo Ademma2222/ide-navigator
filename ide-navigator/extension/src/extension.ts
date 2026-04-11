@@ -14,9 +14,12 @@ export function activate(context: vscode.ExtensionContext) {
         path.join('..', 'server', 'server.py')
     );
 
-    // Найти python в venv
+    // Найти python в venv (Windows: Scripts/python.exe, Mac/Linux: bin/python)
+    const isWindows = process.platform === 'win32';
     const pythonPath = context.asAbsolutePath(
-        path.join('..', 'server', 'venv', 'Scripts', 'python.exe')
+        isWindows
+            ? path.join('..', 'server', 'venv', 'Scripts', 'python.exe')
+            : path.join('..', 'server', 'venv', 'bin', 'python')
     );
 
     console.log('IDE Navigator: python =', pythonPath);
