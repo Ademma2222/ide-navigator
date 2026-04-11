@@ -1,0 +1,14 @@
+# Python
+server/venv/
+server/__pycache__/
+server/*.pyc
+server/.pytest_cache/
+
+# Node / TypeScript
+extension/node_modules/
+extension/out/
+extension/*.vsix
+
+# OS
+.DS_Store
+Thumbs.db
