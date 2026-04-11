@@ -31,8 +31,10 @@ type: project
 - Phase 3 (Apr 22–26): Multi-language + Workspace Symbols
 - Phase 4 (Apr 27–30): Call Graph WebView panel + polish
 
-**Project folder:** to be created (not yet initialized)
+**Project folder:** `2CourseWork/ide-navigator/` — залито на GitHub: https://github.com/Ademma2222/ide-navigator (приватный репозиторий, ветка master)
 
-**Environment:** Python 3.14.3 installed, Git installed, VS Code installed, Node.js LTS just installed (not yet verified).
+**Environment:** Python 3.14.3, Git, VS Code, Node.js v24.14.1, npm 11.11.0. pygls 2.1.1 (импорт из `pygls.lsp.server`), tree-sitter установлен.
+
+**Текущее состояние (2026-04-11):** Фаза 1 завершена. Extension запускается, Python сервер стартует, LSP соединение работает. Следующий шаг — Фаза 2: Document Outline.
 
 **How to apply:** When resuming work, check what phase we're in and pick up from the last completed task.
