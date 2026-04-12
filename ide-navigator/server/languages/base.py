@@ -43,6 +43,44 @@ class BaseLanguage(ABC):
             ),
         )
 
+    # ── Go to Definition ────────────────────────────────────────────────
+
+    def find_definition(self, source: str, line: int, character: int) -> types.Range | None:
+        """Найти определение символа под курсором (внутри одного файла)."""
+        parser = self.get_parser()
+        tree = parser.parse(bytes(source, "utf-8"))
+
+        # Находим самый глубокий узел в позиции курсора
+        node = tree.root_node.descendant_for_point_range(
+            (line, character), (line, character)
+        )
+        if node is None or "identifier" not in node.type:
+            return None
+
+        name = node.text.decode("utf-8")
+
+        # Ищем определение среди символов файла
+        symbols = self._extract_symbols(tree.root_node)
+        found = self._find_symbol_by_name(symbols, name)
+        if found:
+            return found.selection_range
+        return None
+
+    def _find_symbol_by_name(
+        self, symbols: list[types.DocumentSymbol], name: str,
+    ) -> types.DocumentSymbol | None:
+        """Рекурсивный поиск символа по имени в дереве."""
+        for s in symbols:
+            if s.name == name:
+                return s
+            if s.children:
+                found = self._find_symbol_by_name(s.children, name)
+                if found:
+                    return found
+        return None
+
+    # ── Вспомогательные методы (доступны всем наследникам) ────────────────
+
     def _make_symbol(
         self,
         name: str,

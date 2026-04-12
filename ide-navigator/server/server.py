@@ -76,5 +76,28 @@ def document_symbol(
     return symbols
 
 
+@server.feature(types.TEXT_DOCUMENT_DEFINITION)
+def definition(
+    ls: LanguageServer,
+    params: types.DefinitionParams,
+) -> types.Location | None:
+    """Go to Definition — Ctrl+Click прыжок к определению символа."""
+    uri = params.text_document.uri
+    lang = get_language(uri)
+
+    if lang is None:
+        return None
+
+    doc = ls.workspace.get_text_document(uri)
+    result = lang.find_definition(doc.source, params.position.line, params.position.character)
+
+    if result:
+        logger.info(f"Definition: найдено в {uri}:{result.start.line + 1}")
+        return types.Location(uri=uri, range=result)
+
+    logger.info(f"Definition: не найдено для позиции {params.position.line}:{params.position.character}")
+    return None
+
+
 if __name__ == "__main__":
     server.start_io()
