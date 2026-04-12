@@ -148,3 +148,29 @@ logger.info(f"открыт {params.text_document.uri}")
 - LSP соединение устанавливается (подтверждено в Developer Tools)
 
 **Следующий шаг:** Фаза 2 — Document Outline (структура файла в боковой панели)
+
+---
+
+### Дополнения после основной сессии (22:30)
+
+**Настройка репозитория:**
+- Создан `.gitignore` (исключены venv/, node_modules/, out/)
+- Создан `README.md` на русском с badges, архитектурой, инструкцией установки
+- Создан `server/requirements.txt` — важно: tree-sitter версия **0.25.2** (не 0.21.x)
+- README перемещён в корень репозитория `2CourseWork/` для отображения на главной GitHub
+
+**Исправление совместимости (Windows/Mac):**
+- Проблема: путь к Python в venv захардкожен под Windows (`Scripts/python.exe`)
+- Решение: добавили определение ОС в `extension.ts`:
+  - Windows → `venv/Scripts/python.exe`
+  - Mac/Linux → `venv/bin/python`
+
+**Git структура:**
+- Репозиторий: https://github.com/Ademma2222/ide-navigator (приватный)
+- `master` — стабильная ветка (смержена с dev/andrey)
+- `dev/andrey` — рабочая ветка Андрея
+- `dev/dima` — создать когда Дима подключится
+
+**Память:**
+- `memory/` папка в корне проекта, залита в Git — общая для всей команды
+- При клонировании репозитория Claude сразу знает контекст проекта
