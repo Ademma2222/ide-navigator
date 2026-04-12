@@ -1,2 +1,8 @@
 pygls==2.1.1
 tree-sitter==0.25.2
+tree-sitter-python
+tree-sitter-java
+tree-sitter-cpp
+tree-sitter-go
+tree-sitter-javascript
+tree-sitter-swift

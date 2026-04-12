@@ -7,6 +7,10 @@ from lsprotocol import types
 
 from languages.python_lang import PythonLanguage
 from languages.java_lang import JavaLanguage
+from languages.cpp_lang import CppLanguage
+from languages.go_lang import GoLanguage
+from languages.javascript_lang import JavaScriptLanguage
+from languages.swift_lang import SwiftLanguage
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -15,9 +19,17 @@ server = LanguageServer("ide-navigator", "v0.1")
 
 # ── Реестр языков: расширение файла → языковой модуль ─────────────────────
 LANGUAGE_MAP = {
-    ".py":   PythonLanguage(),
-    ".java": JavaLanguage(),
-    # .cpp, .go, .js, .swift — добавит Дима
+    ".py":    PythonLanguage(),
+    ".java":  JavaLanguage(),
+    ".cpp":   CppLanguage(),
+    ".cc":    CppLanguage(),
+    ".cxx":   CppLanguage(),
+    ".h":     CppLanguage(),
+    ".hpp":   CppLanguage(),
+    ".go":    GoLanguage(),
+    ".js":    JavaScriptLanguage(),
+    ".ts":    JavaScriptLanguage(),
+    ".swift": SwiftLanguage(),
 }
 
 
