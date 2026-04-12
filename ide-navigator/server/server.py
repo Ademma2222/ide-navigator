@@ -121,5 +121,25 @@ def references(
     return [types.Location(uri=uri, range=r) for r in ranges]
 
 
+@server.feature(types.TEXT_DOCUMENT_HOVER)
+def hover(
+    ls: LanguageServer,
+    params: types.HoverParams,
+) -> types.Hover | None:
+    """Hover Info — информация о символе при наведении курсора."""
+    uri = params.text_document.uri
+    lang = get_language(uri)
+
+    if lang is None:
+        return None
+
+    doc = ls.workspace.get_text_document(uri)
+    result = lang.get_hover(doc.source, params.position.line, params.position.character)
+
+    if result:
+        logger.info(f"Hover: {uri}:{params.position.line + 1}")
+    return result
+
+
 if __name__ == "__main__":
     server.start_io()

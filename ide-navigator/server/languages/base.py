@@ -118,6 +118,58 @@ class BaseLanguage(ABC):
         for child in node.children:
             self._collect_identifiers(child, name, result)
 
+    # ── Hover Info ─────────────────────────────────────────────────────────
+
+    # Маппинг SymbolKind → человекочитаемое название
+    _KIND_LABELS = {
+        types.SymbolKind.Function: "function",
+        types.SymbolKind.Method: "method",
+        types.SymbolKind.Class: "class",
+        types.SymbolKind.Interface: "interface",
+        types.SymbolKind.Struct: "struct",
+        types.SymbolKind.Namespace: "namespace",
+        types.SymbolKind.Constructor: "constructor",
+        types.SymbolKind.Variable: "variable",
+        types.SymbolKind.Constant: "constant",
+        types.SymbolKind.Enum: "enum",
+        types.SymbolKind.TypeParameter: "type alias",
+    }
+
+    def get_hover(self, source: str, line: int, character: int) -> types.Hover | None:
+        """Информация о символе при наведении курсора."""
+        parser = self.get_parser()
+        tree = parser.parse(bytes(source, "utf-8"))
+
+        node = tree.root_node.descendant_for_point_range(
+            (line, character), (line, character)
+        )
+        if node is None or "identifier" not in node.type:
+            return None
+
+        name = node.text.decode("utf-8")
+
+        symbols = self._extract_symbols(tree.root_node)
+        found = self._find_symbol_by_name(symbols, name)
+        if not found:
+            return None
+
+        kind_label = self._KIND_LABELS.get(found.kind, "symbol")
+        decl_line = found.range.start.line
+
+        # Извлекаем первую строку определения из исходного кода
+        lines = source.splitlines()
+        signature = lines[decl_line].strip() if decl_line < len(lines) else name
+
+        md = f"```\n({kind_label}) {signature}\n```\n---\nDefined on line {decl_line + 1}"
+
+        return types.Hover(
+            contents=types.MarkupContent(
+                kind=types.MarkupKind.Markdown,
+                value=md,
+            ),
+            range=self._to_range(node),
+        )
+
     # ── Вспомогательные методы (доступны всем наследникам) ────────────────
 
     def _make_symbol(
