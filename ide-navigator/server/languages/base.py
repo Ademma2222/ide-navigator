@@ -172,25 +172,70 @@ class BaseLanguage(ABC):
 
     # ── Call Graph ─────────────────────────────────────────────────────────
 
+    # Маппинг SymbolKind → строковый тип для графа
+    _GRAPH_KIND_MAP = {
+        types.SymbolKind.Function: "function",
+        types.SymbolKind.Method: "method",
+        types.SymbolKind.Constructor: "constructor",
+        types.SymbolKind.Class: "class",
+        types.SymbolKind.Interface: "interface",
+        types.SymbolKind.Struct: "struct",
+    }
+
     def get_call_graph(self, source: str) -> dict:
         """Построить граф вызовов: какие функции вызывают какие."""
         parser = self.get_parser()
         tree = parser.parse(bytes(source, "utf-8"))
         root = tree.root_node
 
-        # Собираем имена функций/методов из символов
+        # Собираем все символы (включая классы) с их типами
         symbols = self._extract_symbols(root)
+        symbol_map: dict[str, str] = {}  # name → type string
+        self._collect_all_symbol_types(symbols, symbol_map)
+
+        # Имена функций/методов для отслеживания вызовов
         known_funcs: set[str] = set()
         self._collect_callable_names(symbols, known_funcs)
 
-        # Обходим AST, отслеживая текущую функцию, собираем рёбра
+        # Связи класс → его методы
         edges: set[tuple[str, str]] = set()
+        self._collect_class_edges(symbols, edges)
+
+        # Обходим AST, отслеживая текущую функцию, собираем рёбра вызовов
         self._walk_calls(root, None, known_funcs, edges)
 
-        nodes = [{"id": n, "label": n} for n in sorted(known_funcs)]
+        # Все участники графа: функции + классы (у которых есть методы)
+        all_ids = known_funcs | {n for n in symbol_map if symbol_map[n] in ("class", "interface", "struct")}
+        nodes = [
+            {"id": n, "label": n, "type": symbol_map.get(n, "function")}
+            for n in sorted(all_ids)
+        ]
         edge_list = [{"from": a, "to": b} for a, b in sorted(edges)]
 
         return {"nodes": nodes, "edges": edge_list}
+
+    def _collect_class_edges(
+        self, symbols: list[types.DocumentSymbol], edges: set[tuple[str, str]],
+    ) -> None:
+        """Добавить рёбра класс → его методы/конструкторы."""
+        for s in symbols:
+            if s.kind in (types.SymbolKind.Class, types.SymbolKind.Interface,
+                          types.SymbolKind.Struct) and s.children:
+                for child in s.children:
+                    if child.kind in (types.SymbolKind.Function, types.SymbolKind.Method,
+                                      types.SymbolKind.Constructor):
+                        edges.add((s.name, child.name))
+
+    def _collect_all_symbol_types(
+        self, symbols: list[types.DocumentSymbol], result: dict[str, str],
+    ) -> None:
+        """Собрать все символы с их типами для графа."""
+        for s in symbols:
+            kind_str = self._GRAPH_KIND_MAP.get(s.kind)
+            if kind_str:
+                result[s.name] = kind_str
+            if s.children:
+                self._collect_all_symbol_types(s.children, result)
 
     def _collect_callable_names(
         self, symbols: list[types.DocumentSymbol], result: set[str],
