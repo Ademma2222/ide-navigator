@@ -1,6 +1,7 @@
 import logging
 import os
-from urllib.parse import urlparse
+from pathlib import Path
+from urllib.parse import urlparse, unquote
 
 from pygls.lsp.server import LanguageServer
 from lsprotocol import types
@@ -139,6 +140,87 @@ def hover(
     if result:
         logger.info(f"Hover: {uri}:{params.position.line + 1}")
     return result
+
+
+# ── Workspace Symbols ─────────────────────────────────────────────────────
+
+SUPPORTED_EXTENSIONS = set(LANGUAGE_MAP.keys())
+
+
+def _flatten_symbols(
+    symbols: list[types.DocumentSymbol], uri: str, container: str = "",
+) -> list[types.SymbolInformation]:
+    """Превратить дерево DocumentSymbol в плоский список SymbolInformation."""
+    result = []
+    for s in symbols:
+        result.append(types.SymbolInformation(
+            name=s.name,
+            kind=s.kind,
+            location=types.Location(uri=uri, range=s.selection_range),
+            container_name=container or None,
+        ))
+        if s.children:
+            result.extend(_flatten_symbols(s.children, uri, container=s.name))
+    return result
+
+
+def _scan_workspace_files(folders) -> list[Path]:
+    """Найти все файлы с поддерживаемыми расширениями в workspace."""
+    files = []
+    # pygls 2.x: folders — dict {uri_string: WorkspaceFolder}
+    uris = folders.keys() if isinstance(folders, dict) else [f.uri for f in folders]
+    for folder_uri in uris:
+        folder_path = unquote(urlparse(folder_uri).path)
+        # На Windows путь может начинаться с /C:/... — убираем лишний /
+        if os.name == "nt" and folder_path.startswith("/"):
+            folder_path = folder_path[1:]
+        root = Path(folder_path)
+        if not root.exists():
+            continue
+        for path in root.rglob("*"):
+            if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS:
+                # Пропускаем venv, node_modules и скрытые папки
+                parts = path.relative_to(root).parts
+                if any(p.startswith(".") or p in ("venv", "node_modules", "__pycache__") for p in parts):
+                    continue
+                files.append(path)
+    return files
+
+
+@server.feature(types.WORKSPACE_SYMBOL)
+def workspace_symbol(
+    ls: LanguageServer,
+    params: types.WorkspaceSymbolParams,
+) -> list[types.SymbolInformation]:
+    """Workspace Symbols — Ctrl+T поиск символа по всем файлам проекта."""
+    query = params.query.lower()
+    all_symbols: list[types.SymbolInformation] = []
+
+    folders = ls.workspace.folders
+    if not folders:
+        return []
+
+    for path in _scan_workspace_files(folders):
+        ext = path.suffix.lower()
+        lang = LANGUAGE_MAP.get(ext)
+        if lang is None:
+            continue
+
+        try:
+            source = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+
+        symbols = lang.get_symbols(source)
+        uri = path.as_uri()
+        all_symbols.extend(_flatten_symbols(symbols, uri))
+
+    # Фильтруем по запросу (пустой запрос = все символы)
+    if query:
+        all_symbols = [s for s in all_symbols if query in s.name.lower()]
+
+    logger.info(f"Workspace symbols: {len(all_symbols)} matches for '{params.query}'")
+    return all_symbols
 
 
 if __name__ == "__main__":
