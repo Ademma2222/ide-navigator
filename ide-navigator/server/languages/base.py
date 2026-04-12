@@ -79,6 +79,45 @@ class BaseLanguage(ABC):
                     return found
         return None
 
+    # ── Find All References ───────────────────────────────────────────────
+
+    def find_references(
+        self, source: str, line: int, character: int, include_declaration: bool = True,
+    ) -> list[types.Range]:
+        """Найти все вхождения идентификатора под курсором в файле."""
+        parser = self.get_parser()
+        tree = parser.parse(bytes(source, "utf-8"))
+
+        node = tree.root_node.descendant_for_point_range(
+            (line, character), (line, character)
+        )
+        if node is None or "identifier" not in node.type:
+            return []
+
+        name = node.text.decode("utf-8")
+
+        # Собираем все identifier-узлы с таким же текстом
+        matches: list[types.Range] = []
+        self._collect_identifiers(tree.root_node, name, matches)
+
+        if not include_declaration:
+            # Убираем позицию определения (если есть)
+            symbols = self._extract_symbols(tree.root_node)
+            decl = self._find_symbol_by_name(symbols, name)
+            if decl:
+                matches = [r for r in matches if r != decl.selection_range]
+
+        return matches
+
+    def _collect_identifiers(
+        self, node, name: str, result: list[types.Range],
+    ) -> None:
+        """Рекурсивный обход AST — собрать все узлы-идентификаторы с данным именем."""
+        if "identifier" in node.type and node.text.decode("utf-8") == name:
+            result.append(self._to_range(node))
+        for child in node.children:
+            self._collect_identifiers(child, name, result)
+
     # ── Вспомогательные методы (доступны всем наследникам) ────────────────
 
     def _make_symbol(

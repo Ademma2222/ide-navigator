@@ -99,5 +99,27 @@ def definition(
     return None
 
 
+@server.feature(types.TEXT_DOCUMENT_REFERENCES)
+def references(
+    ls: LanguageServer,
+    params: types.ReferenceParams,
+) -> list[types.Location]:
+    """Find All References — все вхождения символа в файле."""
+    uri = params.text_document.uri
+    lang = get_language(uri)
+
+    if lang is None:
+        return []
+
+    doc = ls.workspace.get_text_document(uri)
+    include_decl = params.context.include_declaration
+    ranges = lang.find_references(
+        doc.source, params.position.line, params.position.character, include_decl,
+    )
+
+    logger.info(f"References: найдено {len(ranges)} в {uri}")
+    return [types.Location(uri=uri, range=r) for r in ranges]
+
+
 if __name__ == "__main__":
     server.start_io()
