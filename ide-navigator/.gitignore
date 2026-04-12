@@ -8,7 +8,3 @@ server/.pytest_cache/
 extension/node_modules/
 extension/out/
 extension/*.vsix
-
-# OS
-.DS_Store
-Thumbs.db
