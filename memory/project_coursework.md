@@ -33,8 +33,15 @@ type: project
 
 **Project folder:** `2CourseWork/ide-navigator/` — залито на GitHub: https://github.com/Ademma2222/ide-navigator (приватный репозиторий, ветка master)
 
-**Environment:** Python 3.14.3, Git, VS Code, Node.js v24.14.1, npm 11.11.0. pygls 2.1.1 (импорт из `pygls.lsp.server`), tree-sitter установлен.
+**Environment (Andrey / Windows):** Python 3.14.3, Git, VS Code, Node.js v24.14.1, npm 11.11.0. pygls 2.1.1 (импорт из `pygls.lsp.server`), tree-sitter установлен.
 
-**Текущее состояние (2026-04-11):** Фаза 1 завершена. Extension запускается, Python сервер стартует, LSP соединение работает. Следующий шаг — Фаза 2: Document Outline.
+**Environment (Dima / Mac):** Python 3.13.7, Node.js 25.9.0 (установлен через Homebrew), npm, pygls 2.1.1, tree-sitter 0.25.2 — всё установлено в venv. Ветка: `dev/dima`.
+
+**Git ветки:**
+- `master` — стабильная
+- `dev/andrey` — ветка Андрея
+- `dev/dima` — ветка Димы (создана 2026-04-12)
+
+**Текущее состояние (2026-04-12):** Фаза 1 завершена. Extension запускается, Python сервер стартует, LSP соединение работает. Окружение Димы настроено. Следующий шаг — Фаза 2: Document Outline.
 
 **How to apply:** When resuming work, check what phase we're in and pick up from the last completed task.
