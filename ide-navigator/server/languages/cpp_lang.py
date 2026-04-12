@@ -57,6 +57,14 @@ class CppLanguage(BaseLanguage):
 
         return symbols
 
+    def _get_func_def_name(self, node) -> str | None:
+        """C++: имя функции вложено в declarator → function_declarator → declarator."""
+        if node.type == "function_definition":
+            name_node = self._func_name(node)
+            if name_node:
+                return name_node.text.decode("utf-8")
+        return None
+
     def _func_name(self, func_node):
         """C++ function name: function_definition → declarator(function_declarator) → declarator(identifier)."""
         declarator = func_node.child_by_field_name("declarator")

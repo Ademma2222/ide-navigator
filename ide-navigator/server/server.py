@@ -223,5 +223,25 @@ def workspace_symbol(
     return all_symbols
 
 
+# ── Call Graph (custom command) ───────────────────────────────────────
+
+@server.command("ide-navigator.callGraph")
+def call_graph_command(ls: LanguageServer, *args):
+    """Вернуть граф вызовов для файла."""
+    logger.info(f"Call graph command, args={args}")
+    if not args:
+        return {"nodes": [], "edges": []}
+
+    uri = args[0]
+    lang = get_language(uri)
+    if lang is None:
+        return {"nodes": [], "edges": []}
+
+    doc = ls.workspace.get_text_document(uri)
+    result = lang.get_call_graph(doc.source)
+    logger.info(f"Call graph: {len(result['nodes'])} nodes, {len(result['edges'])} edges in {uri}")
+    return result
+
+
 if __name__ == "__main__":
     server.start_io()

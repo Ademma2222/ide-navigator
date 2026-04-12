@@ -170,6 +170,97 @@ class BaseLanguage(ABC):
             range=self._to_range(node),
         )
 
+    # ── Call Graph ─────────────────────────────────────────────────────────
+
+    def get_call_graph(self, source: str) -> dict:
+        """Построить граф вызовов: какие функции вызывают какие."""
+        parser = self.get_parser()
+        tree = parser.parse(bytes(source, "utf-8"))
+        root = tree.root_node
+
+        # Собираем имена функций/методов из символов
+        symbols = self._extract_symbols(root)
+        known_funcs: set[str] = set()
+        self._collect_callable_names(symbols, known_funcs)
+
+        # Обходим AST, отслеживая текущую функцию, собираем рёбра
+        edges: set[tuple[str, str]] = set()
+        self._walk_calls(root, None, known_funcs, edges)
+
+        nodes = [{"id": n, "label": n} for n in sorted(known_funcs)]
+        edge_list = [{"from": a, "to": b} for a, b in sorted(edges)]
+
+        return {"nodes": nodes, "edges": edge_list}
+
+    def _collect_callable_names(
+        self, symbols: list[types.DocumentSymbol], result: set[str],
+    ) -> None:
+        """Собрать имена функций и методов из дерева символов."""
+        for s in symbols:
+            if s.kind in (types.SymbolKind.Function, types.SymbolKind.Method,
+                          types.SymbolKind.Constructor):
+                result.add(s.name)
+            if s.children:
+                self._collect_callable_names(s.children, result)
+
+    def _walk_calls(
+        self, node, current_func: str | None,
+        known: set[str], edges: set[tuple[str, str]],
+    ) -> None:
+        """Рекурсивный обход AST: отслеживать текущую функцию, собирать вызовы."""
+        func_name = self._get_func_def_name(node)
+        if func_name is not None:
+            current_func = func_name
+
+        if current_func is not None:
+            callee = self._get_call_name(node)
+            if callee and callee in known:
+                edges.add((current_func, callee))
+
+        for child in node.children:
+            self._walk_calls(child, current_func, known, edges)
+
+    def _get_func_def_name(self, node) -> str | None:
+        """Если узел — определение функции/метода, вернуть имя. Иначе None."""
+        if node.type in (
+            "function_definition", "function_declaration",
+            "method_definition", "method_declaration",
+            "constructor_declaration",
+        ):
+            name_node = node.child_by_field_name("name")
+            if name_node:
+                return name_node.text.decode("utf-8")
+        return None
+
+    def _get_call_name(self, node) -> str | None:
+        """Если узел — вызов функции, вернуть имя вызываемой функции."""
+        if node.type not in ("call", "call_expression", "method_invocation"):
+            return None
+
+        func_node = (
+            node.child_by_field_name("function")
+            or node.child_by_field_name("name")
+        )
+        if func_node is None:
+            return None
+
+        # Простой вызов: foo()
+        if func_node.type in ("identifier", "field_identifier", "property_identifier"):
+            return func_node.text.decode("utf-8")
+
+        # Вызов метода: obj.foo() → извлекаем "foo"
+        if func_node.type in ("attribute", "member_expression",
+                              "selector_expression", "field_expression"):
+            attr = (
+                func_node.child_by_field_name("attribute")
+                or func_node.child_by_field_name("property")
+                or func_node.child_by_field_name("field")
+            )
+            if attr:
+                return attr.text.decode("utf-8")
+
+        return None
+
     # ── Вспомогательные методы (доступны всем наследникам) ────────────────
 
     def _make_symbol(

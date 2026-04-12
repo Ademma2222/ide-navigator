@@ -70,3 +70,16 @@ class JavaScriptLanguage(BaseLanguage):
                 symbols.extend(self._extract_symbols(child, inside_class))
 
         return symbols
+
+    def _get_func_def_name(self, node) -> str | None:
+        """JS: дополнительно обрабатываем стрелочные функции (const foo = () => {})."""
+        result = super()._get_func_def_name(node)
+        if result:
+            return result
+        if node.type == "variable_declarator":
+            value = node.child_by_field_name("value")
+            if value and value.type in ("arrow_function", "function_expression"):
+                name_node = node.child_by_field_name("name")
+                if name_node:
+                    return name_node.text.decode("utf-8")
+        return None
