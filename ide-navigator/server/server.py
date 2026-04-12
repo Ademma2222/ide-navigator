@@ -5,15 +5,21 @@ from urllib.parse import urlparse
 from pygls.lsp.server import LanguageServer
 from lsprotocol import types
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 from languages.python_lang import PythonLanguage
 from languages.java_lang import JavaLanguage
 from languages.cpp_lang import CppLanguage
 from languages.go_lang import GoLanguage
 from languages.javascript_lang import JavaScriptLanguage
-from languages.swift_lang import SwiftLanguage
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+try:
+    from languages.swift_lang import SwiftLanguage
+    _swift_available = True
+except ModuleNotFoundError:
+    _swift_available = False
+    logger.warning("tree_sitter_swift не установлен — Swift не поддерживается")
 
 server = LanguageServer("ide-navigator", "v0.1")
 
@@ -29,7 +35,7 @@ LANGUAGE_MAP = {
     ".go":    GoLanguage(),
     ".js":    JavaScriptLanguage(),
     ".ts":    JavaScriptLanguage(),
-    ".swift": SwiftLanguage(),
+    **({".swift": SwiftLanguage()} if _swift_available else {}),
 }
 
 
