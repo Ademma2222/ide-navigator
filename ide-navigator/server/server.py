@@ -17,7 +17,7 @@ server = LanguageServer("ide-navigator", "v0.1")
 LANGUAGE_MAP = {
     ".py":   PythonLanguage(),
     ".java": JavaLanguage(),
-    # .cpp, .go, .js — добавит Дима
+    # .cpp, .go, .js, .swift — добавит Дима
 }
 
 
