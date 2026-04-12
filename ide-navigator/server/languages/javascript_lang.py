@@ -50,15 +50,18 @@ class JavaScriptLanguage(BaseLanguage):
                     ))
 
             elif child.type in ("lexical_declaration", "variable_declaration"):
-                # const foo = () => ...  или  const foo = function() ...
                 for decl in child.children:
                     if decl.type == "variable_declarator":
                         name_node = decl.child_by_field_name("name")
-                        value = decl.child_by_field_name("value")
-                        if name_node and value and value.type in ("arrow_function", "function_expression"):
+                        if name_node:
+                            value = decl.child_by_field_name("value")
+                            if value and value.type in ("arrow_function", "function_expression"):
+                                kind = types.SymbolKind.Function
+                            else:
+                                kind = types.SymbolKind.Variable
                             symbols.append(self._make_symbol(
                                 name=name_node.text.decode("utf-8"),
-                                kind=types.SymbolKind.Function,
+                                kind=kind,
                                 node=decl,
                                 name_node=name_node,
                             ))

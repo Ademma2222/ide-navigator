@@ -13,6 +13,7 @@ from languages.java_lang import JavaLanguage
 from languages.cpp_lang import CppLanguage
 from languages.go_lang import GoLanguage
 from languages.javascript_lang import JavaScriptLanguage
+from languages.typescript_lang import TypeScriptLanguage
 
 try:
     from languages.swift_lang import SwiftLanguage
@@ -34,7 +35,8 @@ LANGUAGE_MAP = {
     ".hpp":   CppLanguage(),
     ".go":    GoLanguage(),
     ".js":    JavaScriptLanguage(),
-    ".ts":    JavaScriptLanguage(),
+    ".ts":    TypeScriptLanguage(),
+    ".tsx":   TypeScriptLanguage(),
     **({".swift": SwiftLanguage()} if _swift_available else {}),
 }
 
@@ -50,6 +52,8 @@ def get_language(uri: str):
 
 @server.feature(types.TEXT_DOCUMENT_DID_OPEN)
 def did_open(ls: LanguageServer, params: types.DidOpenTextDocumentParams):
+    # Сейчас только логируем. В будущем — триггер для индексации файла
+    # (нужно для Go to Definition и Find References через project indexer)
     logger.info(f"Открыт: {params.text_document.uri}")
 
 

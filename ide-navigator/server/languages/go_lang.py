@@ -53,4 +53,28 @@ class GoLanguage(BaseLanguage):
                                 name_node=name_node,
                             ))
 
+            elif child.type == "const_declaration":
+                for spec in child.children:
+                    if spec.type == "const_spec":
+                        name_node = spec.child_by_field_name("name")
+                        if name_node:
+                            symbols.append(self._make_symbol(
+                                name=name_node.text.decode("utf-8"),
+                                kind=types.SymbolKind.Constant,
+                                node=spec,
+                                name_node=name_node,
+                            ))
+
+            elif child.type == "var_declaration":
+                for spec in child.children:
+                    if spec.type == "var_spec":
+                        name_node = spec.child_by_field_name("name")
+                        if name_node:
+                            symbols.append(self._make_symbol(
+                                name=name_node.text.decode("utf-8"),
+                                kind=types.SymbolKind.Variable,
+                                node=spec,
+                                name_node=name_node,
+                            ))
+
         return symbols
