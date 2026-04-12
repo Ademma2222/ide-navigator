@@ -41,16 +41,18 @@ class PythonLanguage(BaseLanguage):
                         children=children,
                     ))
 
-            elif child.type == "assignment" and not inside_class:
-                # Переменные на уровне модуля: x = 5, MY_CONST = "value"
-                left = child.child_by_field_name("left")
-                if left and left.type == "identifier":
-                    symbols.append(self._make_symbol(
-                        name=left.text.decode("utf-8"),
-                        kind=types.SymbolKind.Variable,
-                        node=child,
-                        name_node=left,
-                    ))
+            elif child.type == "expression_statement" and not inside_class:
+                # module → expression_statement → assignment (MY_CONST = 42)
+                assign = next((c for c in child.children if c.type == "assignment"), None)
+                if assign:
+                    left = assign.child_by_field_name("left")
+                    if left and left.type == "identifier":
+                        symbols.append(self._make_symbol(
+                            name=left.text.decode("utf-8"),
+                            kind=types.SymbolKind.Variable,
+                            node=assign,
+                            name_node=left,
+                        ))
 
             elif child.type in ("module", "block"):
                 symbols.extend(self._extract_symbols(child, inside_class))
