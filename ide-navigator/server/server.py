@@ -1,16 +1,57 @@
 import logging
+import os
+from urllib.parse import urlparse
+
 from pygls.lsp.server import LanguageServer
 from lsprotocol import types
+
+from languages.python_lang import PythonLanguage
+from languages.java_lang import JavaLanguage
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 server = LanguageServer("ide-navigator", "v0.1")
 
+# ── Реестр языков: расширение файла → языковой модуль ─────────────────────
+LANGUAGE_MAP = {
+    ".py":   PythonLanguage(),
+    ".java": JavaLanguage(),
+    # .cpp, .go, .js, .swift — добавит Дима
+}
+
+
+def get_language(uri: str):
+    """Определить язык по URI файла."""
+    path = urlparse(uri).path
+    ext = os.path.splitext(path)[1].lower()
+    return LANGUAGE_MAP.get(ext)
+
+
+# ── Обработчики LSP ────────────────────────────────────────────────────────
 
 @server.feature(types.TEXT_DOCUMENT_DID_OPEN)
 def did_open(ls: LanguageServer, params: types.DidOpenTextDocumentParams):
-    logger.info(f"IDE Navigator: открыт {params.text_document.uri}")
+    logger.info(f"Открыт: {params.text_document.uri}")
+
+
+@server.feature(types.TEXT_DOCUMENT_DOCUMENT_SYMBOL)
+def document_symbol(
+    ls: LanguageServer,
+    params: types.DocumentSymbolParams,
+) -> list[types.DocumentSymbol]:
+    """Document Outline — структура файла в боковой панели VS Code."""
+    uri = params.text_document.uri
+    lang = get_language(uri)
+
+    if lang is None:
+        logger.info(f"Язык не поддерживается: {uri}")
+        return []
+
+    doc = ls.workspace.get_text_document(uri)
+    symbols = lang.get_symbols(doc.source)
+    logger.info(f"Outline: найдено {len(symbols)} символов в {uri}")
+    return symbols
 
 
 if __name__ == "__main__":
