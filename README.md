@@ -1,7 +1,7 @@
 # IDE Navigator
 
-> Плагин для VS Code на основе статического анализа кода.
-> Поддерживает 6 языков. Не требует запуска кода — только анализ исходников.
+> Плагин для Visual Studio Code на основе статического анализа исходного кода.
+> Реализует навигацию, поиск и визуализацию структуры проекта без запуска программы — только через разбор AST.
 
 ![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?style=flat-square&logo=typescript&logoColor=white)
@@ -16,18 +16,20 @@
 
 ## Возможности
 
-| Функция | Статус | Описание |
-|---------|--------|----------|
-| Структура файла | 🚧 В разработке | Дерево классов и функций в боковой панели |
-| Перейти к определению | 🚧 В разработке | Переход к месту где объявлен символ |
-| Найти все использования | 🚧 В разработке | Все места где используется символ |
-| Подсказка при наведении | 🚧 В разработке | Сигнатура функции при наведении курсора |
-| Поиск по проекту | 🚧 В разработке | Поиск символов по всему проекту |
-| Граф вызовов | 🚧 В разработке | Интерактивный граф связей между функциями |
+| Функция | Описание |
+|---------|----------|
+| Document Outline | Иерархическое дерево классов, функций и методов в боковой панели VS Code |
+| Go to Definition | Переход к месту объявления символа по `Ctrl+Click` |
+| Find All References | Кастомная панель всех вхождений символа с подсветкой синтаксиса, вызывается по `Shift+F12` |
+| Hover Info | Тултип с типом символа, первой строкой определения и номером строки |
+| Workspace Symbols | Поиск символов по всему проекту через `Ctrl+T` |
+| Call Graph | Интерактивный граф вызовов в стиле Obsidian, открывается через Command Palette |
 
 ## Поддерживаемые языки
 
-🐍 Python · ☕ Java · ⚡ C++ · 🐹 Go · 🌐 JavaScript · 🍎 Swift
+Python, Java, C++, Go, JavaScript, TypeScript, Swift (опционально, только на macOS).
+
+Каждый язык реализован как отдельный модуль, наследующий общий базовый класс `BaseLanguage`.
 
 ---
 
@@ -36,41 +38,42 @@
 ```
 VS Code Extension (TypeScript)
         │
-        │  LSP (JSON-RPC через stdio)
+        │  Language Server Protocol (JSON-RPC через stdio)
         ▼
 Python Language Server (pygls)
         │
-        ├── Tree-sitter (парсер для всех языков)
-        ├── Индексер (индекс символов всего проекта)
-        └── WebView (граф вызовов на vis.js)
+        ├── tree-sitter — построение AST для каждого из поддерживаемых языков
+        ├── languages/  — модули анализа, по одному на язык
+        └── WebView    — панели Call Graph и References (vis.js, highlight.js)
 ```
 
-TypeScript расширение — тонкий клиент (~80 строк). Вся логика анализа в Python сервере.
+Клиент на TypeScript представляет собой тонкий адаптер: запускает Python-процесс, регистрирует команды и управляет WebView-панелями. Вся логика статического анализа реализована на стороне сервера.
 
 ---
 
 ## Установка
 
 ### Требования
-- Python 3.11+
-- Node.js 18+
-- VS Code 1.85+
+
+- Python 3.11 или новее
+- Node.js 18 или новее
+- Visual Studio Code 1.85 или новее
 
 ### Шаги
 
 ```bash
-# Клонировать репозиторий
+# Клонирование репозитория
 git clone https://github.com/Ademma2222/ide-navigator.git
 cd ide-navigator
 
-# Настроить Python сервер
+# Настройка Python-сервера
 cd server
 python -m venv venv
-source venv/Scripts/activate   # Windows
-source venv/bin/activate       # Mac/Linux
+source venv/Scripts/activate    # Windows
+source venv/bin/activate        # macOS / Linux
 pip install -r requirements.txt
 
-# Настроить VS Code расширение
+# Настройка VS Code расширения
 cd ../extension
 npm install
 npm run compile
@@ -78,9 +81,7 @@ npm run compile
 
 ### Запуск в режиме разработки
 
-```bash
-code --extensionDevelopmentPath=/путь/к/ide-navigator/extension
-```
+Откройте папку `ide-navigator/extension` в VS Code и нажмите `F5`. Откроется отдельное окно Extension Development Host с активным плагином — в нём можно проверять работу расширения на любом проекте.
 
 ---
 
@@ -88,33 +89,36 @@ code --extensionDevelopmentPath=/путь/к/ide-navigator/extension
 
 ```
 ide-navigator/
-├── extension/          # VS Code расширение (TypeScript)
+├── extension/                  — VS Code расширение (TypeScript)
 │   ├── src/
-│   │   └── extension.ts
-│   └── package.json
+│   │   └── extension.ts        — LSP-клиент, регистрация команд, WebView-панели
+│   ├── package.json            — contributes: commands, keybindings
+│   └── tsconfig.json
 │
-└── server/             # Language Server (Python)
-    ├── server.py       # Точка входа LSP (pygls)
-    ├── analyzer.py     # Логика статического анализа
-    ├── indexer.py      # Индекс символов проекта
-    └── languages/      # Запросы Tree-sitter по языкам
+└── server/                     — Language Server (Python)
+    ├── server.py               — pygls: LSP-обработчики и кастомные команды
+    ├── requirements.txt
+    └── languages/
+        ├── base.py             — BaseLanguage: общая логика для всех языков
         ├── python_lang.py
         ├── java_lang.py
         ├── cpp_lang.py
         ├── go_lang.py
         ├── javascript_lang.py
-        └── swift_lang.py
+        ├── typescript_lang.py
+        └── swift_lang.py       — опциональный модуль, активен только на macOS
 ```
 
 ---
 
 ## Использованные технологии
 
-- [pygls](https://github.com/openlawlibrary/pygls) — Python LSP фреймворк
-- [tree-sitter](https://tree-sitter.github.io/) — Универсальный парсер
-- [vis.js](https://visjs.org/) — Интерактивная визуализация графов
-- [vscode-languageclient](https://github.com/microsoft/vscode-languageserver-node) — LSP клиент для VS Code
+- [pygls](https://github.com/openlawlibrary/pygls) — реализация Language Server Protocol на Python
+- [tree-sitter](https://tree-sitter.github.io/) — универсальный инкрементальный парсер исходного кода
+- [vis.js](https://visjs.org/) — библиотека интерактивной визуализации графов
+- [highlight.js](https://highlightjs.org/) — подсветка синтаксиса в WebView-панелях
+- [vscode-languageclient](https://github.com/microsoft/vscode-languageserver-node) — LSP-клиент для VS Code
 
 ---
 
-*Курсовая работа — НИУ ВШЭ, Компьютерные науки, 2026*
+*Курсовая работа. Национальный исследовательский университет «Высшая школа экономики», факультет компьютерных наук, 2026.*
