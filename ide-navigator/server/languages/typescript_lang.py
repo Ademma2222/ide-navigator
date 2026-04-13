@@ -10,6 +10,8 @@ class TypeScriptLanguage(JavaScriptLanguage):
     JS-узлы обрабатываются через super(), TS-специфичные — здесь.
     """
 
+    LANGUAGE_ID = "typescript"
+
     def get_parser(self) -> Parser:
         return Parser(Language(tsts.language_typescript()))
 

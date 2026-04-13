@@ -14,6 +14,17 @@
       {
         "command": "ide-navigator.showCallGraph",
         "title": "IDE Navigator: Show Call Graph"
+      },
+      {
+        "command": "ide-navigator.showReferences",
+        "title": "IDE Navigator: Show References"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "ide-navigator.showReferences",
+        "key": "shift+f12",
+        "when": "editorTextFocus"
       }
     ]
   },

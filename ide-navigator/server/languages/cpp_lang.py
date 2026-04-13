@@ -6,6 +6,8 @@ from .base import BaseLanguage
 
 class CppLanguage(BaseLanguage):
 
+    LANGUAGE_ID = "cpp"
+
     def get_parser(self) -> Parser:
         return Parser(Language(tscpp.language()))
 

@@ -6,6 +6,8 @@ from .base import BaseLanguage
 
 class SwiftLanguage(BaseLanguage):
 
+    LANGUAGE_ID = "swift"
+
     def get_parser(self) -> Parser:
         return Parser(Language(tsswift.language()))
 

@@ -223,6 +223,31 @@ def workspace_symbol(
     return all_symbols
 
 
+# ── References panel (custom command) ────────────────────────────────
+
+@server.command("ide-navigator.references")
+def references_command(ls: LanguageServer, *args):
+    """Вернуть референсы + сниппеты для кастомной WebView-панели."""
+    logger.info(f"References command, args={args}")
+    if len(args) < 3:
+        return None
+
+    uri, line, character = args[0], args[1], args[2]
+    include_decl = args[3] if len(args) > 3 else True
+
+    lang = get_language(uri)
+    if lang is None:
+        return None
+
+    doc = ls.workspace.get_text_document(uri)
+    result = lang.get_references_with_context(doc.source, line, character, include_decl)
+
+    if result:
+        result["uri"] = uri
+        logger.info(f"References panel: {len(result['refs'])} in {uri}")
+    return result
+
+
 # ── Call Graph (custom command) ───────────────────────────────────────
 
 @server.command("ide-navigator.callGraph")

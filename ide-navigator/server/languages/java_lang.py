@@ -6,6 +6,8 @@ from .base import BaseLanguage
 
 class JavaLanguage(BaseLanguage):
 
+    LANGUAGE_ID = "java"
+
     def get_parser(self) -> Parser:
         return Parser(Language(tsjava.language()))
 

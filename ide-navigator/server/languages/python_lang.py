@@ -6,6 +6,8 @@ from .base import BaseLanguage
 
 class PythonLanguage(BaseLanguage):
 
+    LANGUAGE_ID = "python"
+
     def get_parser(self) -> Parser:
         return Parser(Language(tspython.language()))
 

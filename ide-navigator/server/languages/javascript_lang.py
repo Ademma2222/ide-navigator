@@ -6,6 +6,8 @@ from .base import BaseLanguage
 
 class JavaScriptLanguage(BaseLanguage):
 
+    LANGUAGE_ID = "javascript"
+
     def get_parser(self) -> Parser:
         return Parser(Language(tsjs.language()))
 

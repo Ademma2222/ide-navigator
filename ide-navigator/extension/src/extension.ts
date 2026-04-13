@@ -102,6 +102,80 @@ export function activate(context: vscode.ExtensionContext) {
     );
 
     context.subscriptions.push(showCallGraph);
+
+    // Команда для открытия панели референсов
+    const showReferences = vscode.commands.registerCommand(
+        'ide-navigator.showReferences',
+        async () => {
+            const editor = vscode.window.activeTextEditor;
+            if (!editor) {
+                vscode.window.showWarningMessage('Откройте файл для поиска референсов');
+                return;
+            }
+
+            const uri = editor.document.uri.toString();
+            const position = editor.selection.active;
+
+            interface ReferenceItem {
+                line: number;
+                character: number;
+                endCharacter: number;
+                snippet: string;
+            }
+            interface ReferencesData {
+                name: string;
+                language: string;
+                uri: string;
+                refs: ReferenceItem[];
+            }
+
+            let data: ReferencesData | null;
+            try {
+                data = await client.sendRequest('workspace/executeCommand', {
+                    command: 'ide-navigator.references',
+                    arguments: [uri, position.line, position.character, true]
+                });
+            } catch (err: any) {
+                vscode.window.showErrorMessage(`References: ошибка — ${err.message}`);
+                return;
+            }
+
+            if (!data || data.refs.length === 0) {
+                vscode.window.showInformationMessage('Референсы не найдены — поставьте курсор на идентификатор');
+                return;
+            }
+
+            const panel = vscode.window.createWebviewPanel(
+                'ideNavigatorReferences',
+                `References: ${data.name}`,
+                vscode.ViewColumn.Beside,
+                { enableScripts: true }
+            );
+
+            panel.webview.html = getReferencesHtml(data, path.basename(editor.document.fileName));
+
+            panel.webview.onDidReceiveMessage(
+                async (message) => {
+                    if (message.command === 'openReference' && data) {
+                        const targetUri = vscode.Uri.parse(data.uri);
+                        const pos = new vscode.Position(message.line, message.character);
+                        const range = new vscode.Range(
+                            pos,
+                            new vscode.Position(message.line, message.endCharacter)
+                        );
+                        await vscode.window.showTextDocument(targetUri, {
+                            selection: range,
+                            viewColumn: vscode.ViewColumn.One
+                        });
+                    }
+                },
+                undefined,
+                context.subscriptions
+            );
+        }
+    );
+
+    context.subscriptions.push(showReferences);
 }
 
 export function deactivate(): Thenable<void> | undefined {
@@ -285,6 +359,163 @@ function getCallGraphHtml(
                 legendEl.appendChild(row);
             });
         }
+    </script>
+</body>
+</html>`;
+}
+
+
+function escapeHtml(s: string): string {
+    return s.replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+}
+
+
+function getReferencesHtml(
+    data: {
+        name: string,
+        language: string,
+        uri: string,
+        refs: {line: number, character: number, endCharacter: number, snippet: string}[]
+    },
+    fileName: string,
+): string {
+    const json = JSON.stringify(data);
+    const name = escapeHtml(data.name);
+    const file = escapeHtml(fileName);
+    const count = data.refs.length;
+    return `<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src 'none'; script-src https://unpkg.com 'unsafe-inline'; style-src https://unpkg.com 'unsafe-inline';">
+    <link rel="stylesheet" href="https://unpkg.com/@highlightjs/cdn-assets@11.9.0/styles/atom-one-dark.min.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #191919;
+            color: #e0e0e0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            padding: 24px 32px;
+            overflow-x: hidden;
+        }
+
+        .header {
+            display: flex;
+            align-items: baseline;
+            gap: 12px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid #2a2a2a;
+            margin-bottom: 20px;
+        }
+        .header .title {
+            font-size: 18px;
+            font-weight: 500;
+            color: #e0e0e0;
+        }
+        .header .name {
+            color: #7f6df2;
+            font-family: 'JetBrains Mono', Consolas, 'Courier New', monospace;
+            font-size: 16px;
+        }
+        .header .count {
+            color: #666;
+            font-size: 13px;
+        }
+        .header .file {
+            color: #555;
+            font-size: 12px;
+            margin-left: auto;
+        }
+
+        .ref {
+            display: flex;
+            align-items: flex-start;
+            gap: 16px;
+            padding: 10px 12px;
+            margin: 2px 0;
+            border-radius: 6px;
+            cursor: pointer;
+            border-left: 2px solid transparent;
+            transition: background 0.12s, border-color 0.12s;
+        }
+        .ref:hover {
+            background: rgba(127,109,242,0.08);
+            border-left-color: #7f6df2;
+        }
+        .ref .line-num {
+            color: #555;
+            font-family: 'JetBrains Mono', Consolas, 'Courier New', monospace;
+            font-size: 12px;
+            min-width: 40px;
+            text-align: right;
+            padding-top: 2px;
+            flex-shrink: 0;
+        }
+        .ref .code {
+            flex: 1;
+            font-family: 'JetBrains Mono', Consolas, 'Courier New', monospace;
+            font-size: 13px;
+            line-height: 1.5;
+            overflow-x: auto;
+            white-space: pre;
+            background: transparent !important;
+            padding: 0 !important;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <span class="title">References</span>
+        <span class="name">${name}</span>
+        <span class="count">${count}</span>
+        <span class="file">${file}</span>
+    </div>
+    <div id="list"></div>
+    <script src="https://unpkg.com/@highlightjs/cdn-assets@11.9.0/highlight.min.js"></script>
+    <script>
+        const data = ${json};
+        const vscode = acquireVsCodeApi();
+        const list = document.getElementById('list');
+
+        function escapeHtml(s) {
+            return s.replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;');
+        }
+
+        data.refs.forEach(ref => {
+            const div = document.createElement('div');
+            div.className = 'ref';
+
+            let highlighted;
+            try {
+                highlighted = hljs.highlight(ref.snippet, {
+                    language: data.language,
+                    ignoreIllegals: true
+                }).value;
+            } catch (e) {
+                highlighted = escapeHtml(ref.snippet);
+            }
+
+            div.innerHTML =
+                '<span class="line-num">' + (ref.line + 1) + '</span>' +
+                '<pre class="code hljs">' + highlighted + '</pre>';
+
+            div.addEventListener('click', () => {
+                vscode.postMessage({
+                    command: 'openReference',
+                    line: ref.line,
+                    character: ref.character,
+                    endCharacter: ref.endCharacter
+                });
+            });
+
+            list.appendChild(div);
+        });
     </script>
 </body>
 </html>`;

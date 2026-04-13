@@ -6,6 +6,8 @@ from .base import BaseLanguage
 
 class GoLanguage(BaseLanguage):
 
+    LANGUAGE_ID = "go"
+
     def get_parser(self) -> Parser:
         return Parser(Language(tsgo.language()))
 

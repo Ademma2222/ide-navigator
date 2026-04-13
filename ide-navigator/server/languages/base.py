@@ -12,6 +12,10 @@ from lsprotocol import types
 
 class BaseLanguage(ABC):
 
+    # Идентификатор языка для подсветки синтаксиса в Markdown-код-блоках.
+    # Переопределяется в каждом языковом наследнике.
+    LANGUAGE_ID: str = "text"
+
     @abstractmethod
     def get_parser(self) -> Parser:
         """Вернуть настроенный парсер tree-sitter для этого языка."""
@@ -160,7 +164,17 @@ class BaseLanguage(ABC):
         lines = source.splitlines()
         signature = lines[decl_line].strip() if decl_line < len(lines) else name
 
-        md = f"```\n({kind_label}) {signature}\n```\n---\nDefined on line {decl_line + 1}"
+        # Markdown hover:
+        #   1. Код-блок с подсветкой синтаксиса (через LANGUAGE_ID наследника)
+        #   2. Горизонтальный разделитель
+        #   3. Kind (жирным) — line N (em-dash как разделитель)
+        md = (
+            f"```{self.LANGUAGE_ID}\n"
+            f"{signature}\n"
+            f"```\n"
+            f"---\n"
+            f"**{kind_label}** — line {decl_line + 1}"
+        )
 
         return types.Hover(
             contents=types.MarkupContent(
@@ -169,6 +183,52 @@ class BaseLanguage(ABC):
             ),
             range=self._to_range(node),
         )
+
+    # ── References with context (для кастомной WebView-панели) ───────────
+
+    def get_references_with_context(
+        self, source: str, line: int, character: int, include_declaration: bool = True,
+    ) -> dict | None:
+        """
+        Найти все референсы символа под курсором + извлечь строку-сниппет из
+        исходника для каждого вхождения. Используется кастомной командой
+        ide-navigator.references → Obsidian-style WebView-панель.
+        """
+        parser = self.get_parser()
+        tree = parser.parse(bytes(source, "utf-8"))
+
+        node = tree.root_node.descendant_for_point_range(
+            (line, character), (line, character)
+        )
+        if node is None or "identifier" not in node.type:
+            return None
+
+        name = node.text.decode("utf-8")
+
+        # Переиспользуем существующую find_references
+        ranges = self.find_references(source, line, character, include_declaration)
+        if not ranges:
+            return None
+
+        src_lines = source.splitlines()
+        refs = []
+        for r in ranges:
+            line_idx = r.start.line
+            snippet = src_lines[line_idx] if line_idx < len(src_lines) else ""
+            refs.append({
+                "line": line_idx,
+                "character": r.start.character,
+                "endCharacter": r.end.character,
+                "snippet": snippet,
+            })
+
+        refs.sort(key=lambda item: (item["line"], item["character"]))
+
+        return {
+            "name": name,
+            "language": self.LANGUAGE_ID,
+            "refs": refs,
+        }
 
     # ── Call Graph ─────────────────────────────────────────────────────────
 
