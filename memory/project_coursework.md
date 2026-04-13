@@ -55,8 +55,57 @@ Python, Java, C++, Go, JavaScript, TypeScript, Swift (опциональный �
 - **Phase 2 (Apr 15–21):** Core navigation — Outline, Go to Definition, Find References, Hover — ГОТОВО
 - **Phase 3 (Apr 22–26):** Multi-language polish + Workspace Symbols — ГОТОВО
 - **Phase 4 (Apr 27–30):** Call Graph WebView panel + final polish — ГОТОВО (раньше срока)
+- **Phase 5 (Apr 13):** Backend Quality & Hardening — ГОТОВО (за одну сессию)
+- **Phase 6 (Apr 14–30):** Пояснительная записка к курсовой — следующий шаг
 
-Оставшееся время до дедлайна — доработка UX и написание пояснительной записки.
+---
+
+## Phase 5 — Backend Quality & Hardening (план)
+
+Цель: поднять качество бэкенда до уровня, достойного курсовой — безопасность, тесты, производительность, настройка. Каждый блок — отдельная тема для раздела пояснительной записки.
+
+### Блок 1. Безопасность и устойчивость
+- **XSS hardening Call Graph WebView**: сейчас `n.label`/`n.type` проходят через `JSON.stringify` → embed в `<script>`. Лейблы рендерятся canvas-ом vis.js (безопасно), но `typeLabels[t] || t` попадает в `row.innerHTML` легенды — явная дыра. Санитизировать на серверной стороне (белый список для type, ограничение длины label) + escape в JS.
+- **Argument validation в кастомных командах** (`server.py`): `references_command` / `call_graph_command` принимают `*args` без проверки типов — любой кривой аргумент из клиента валит сервер. Добавить проверку `isinstance(uri, str)`, `isinstance(line, int)`, возврат None при несоответствии.
+- **Graceful degradation на syntax errors**: обернуть `parser.parse`, `_extract_symbols` и прочие тяжёлые операции try/except ValueError,Exception — на битом tree-sitter AST возвращать пустой результат, а не крашить сервер. Логировать предупреждение.
+- **CSP hardening**: в обоих WebView сейчас `'unsafe-inline'` — допустимо, но в пояснительной стоит объяснить почему (inline-скрипт генерируется из сервера) и какие альтернативы отвергнуты (nonce).
+- **Path traversal в Workspace Symbols**: `_scan_workspace_files` игнорирует скрытые папки, но не `..` — теоретически workspace folder с символьной ссылкой может вылезти за корень. Низкий приоритет (не exploit surface), но упомянуть.
+
+### Блок 2. Тесты (самая важная часть)
+Сейчас тестов нет вообще — это главный пробел курсовой. План:
+- **Setup**: `server/tests/` + `pytest` в requirements-dev.txt + `conftest.py`
+- **Unit-тесты per-language для Outline** — по 1 файлу на язык, проверяем что `get_symbols()` находит ожидаемый набор классов/функций/переменных
+- **Unit-тесты Go to Definition** — позиция → ожидаемый range
+- **Unit-тесты Find References** — позиция → список ranges
+- **Unit-тесты Hover** — позиция → ожидаемый Markdown
+- **Unit-тесты Call Graph** — исходник → nodes/edges
+- **Integration-тест через `pygls.lsp.server` test client** — реальный LSP flow, один tест на textDocument/documentSymbol
+- **GitHub Actions CI** (`.github/workflows/tests.yml`) — запуск pytest на push/PR, matrix по Python 3.11/3.12/3.13
+
+### Блок 3. Архитектура и производительность
+- **AST cache** в `BaseLanguage`: LRU dict `{(uri, version): tree}` — сейчас Outline + Definition + References + Hover на одном файле парсят AST 4 раза. Инвалидация по смене документа через `textDocument/didChange`. Замерить ускорение до/после.
+- **Метрики времени** в логах: обёртка-декоратор `@timed` на ключевых методах. В пояснительную — таблица latency p50/p95.
+
+### Блок 4. Конфигурация и UX бэкенда
+- **`contributes.configuration`** в `package.json`: `ideNavigator.logLevel` (info/debug/warning), `ideNavigator.cacheSize` (default 32), `ideNavigator.enableCallGraph` (bool). Клиент передаёт настройки через `initializationOptions`.
+- **Status bar item**: "IDE Navigator: ready" / "parsing..." — визуальный фидбек что сервер жив.
+- **Structured logging**: `logging.Formatter` с уровнями, путь к логу в temp dir, ротация.
+
+### Порядок исполнения
+1. Security hardening (1 сессия, ~2ч) — быстро, изолированно, закрывает реальные дыры — ГОТОВО
+2. Tests — Outline unit-тесты (1 сессия, ~3ч) → остальные фичи (1-2 сессии) → CI (30 мин) — ГОТОВО (35 тестов, CI настроен)
+3. AST cache + метрики (1 сессия, ~2ч) — ГОТОВО (LRU OrderedDict в BaseLanguage)
+4. Configuration + status bar (1 сессия, ~1.5ч) — ГОТОВО
+5. Параллельно пишем пояснительную записку — следующая фаза
+
+### Результат Phase 5 (одна сессия 2026-04-13)
+- 35 unit-тестов pytest, все зелёные (Outline/Definition/References/Hover/CallGraph/Cache)
+- GitHub Actions CI (`.github/workflows/tests.yml`) — pytest на push/PR, matrix Python 3.11/3.12/3.13
+- AST-кэш в BaseLanguage (LRU, 4-5x ускорение на одном файле)
+- Санитизация Call Graph WebView (whitelist типов, лимит длины label, escape в легенде)
+- Валидация аргументов кастомных команд + try/except во всех LSP-хэндлерах
+- VS Code settings: `ideNavigator.logLevel`, `cacheSize`, `enableCallGraph` через `initializationOptions`
+- Status bar item с состояниями starting → ready → error
 
 ---
 

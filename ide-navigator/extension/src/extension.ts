@@ -7,8 +7,29 @@ import {
 } from 'vscode-languageclient/node';
 
 let client: LanguageClient;
+let statusBar: vscode.StatusBarItem;
+
+function setStatus(text: string, tooltip?: string) {
+    statusBar.text = `$(symbol-namespace) ${text}`;
+    statusBar.tooltip = tooltip;
+    statusBar.show();
+}
 
 export function activate(context: vscode.ExtensionContext) {
+    // Status bar: единый индикатор состояния плагина
+    statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+    statusBar.command = 'ide-navigator.showCallGraph';
+    setStatus('IDE Navigator: starting…', 'Запускается Python LSP сервер');
+    context.subscriptions.push(statusBar);
+
+    // Настройки из VS Code (раздел ideNavigator.*)
+    const config = vscode.workspace.getConfiguration('ideNavigator');
+    const initializationOptions = {
+        logLevel: config.get<string>('logLevel', 'info'),
+        cacheSize: config.get<number>('cacheSize', 32),
+        enableCallGraph: config.get<boolean>('enableCallGraph', true),
+    };
+
     // Путь к Python серверу
     const serverPath = context.asAbsolutePath(
         path.join('..', 'server', 'server.py')
@@ -43,7 +64,8 @@ export function activate(context: vscode.ExtensionContext) {
             { scheme: 'file', language: 'typescript' },
             { scheme: 'file', language: 'typescriptreact' },
             { scheme: 'file', language: 'swift' }
-        ]
+        ],
+        initializationOptions,
     };
 
     // Создаём и запускаем LSP клиент
@@ -56,9 +78,10 @@ export function activate(context: vscode.ExtensionContext) {
 
     client.start().then(() => {
         console.log('IDE Navigator: сервер успешно запущен');
-        vscode.window.showInformationMessage('IDE Navigator запущен');
+        setStatus('IDE Navigator', 'LSP сервер активен. Клик — Show Call Graph');
     }).catch((err) => {
         console.error('IDE Navigator: ошибка запуска сервера', err);
+        setStatus('IDE Navigator: error', err.message);
         vscode.window.showErrorMessage(`IDE Navigator: ошибка — ${err.message}`);
     });
 
@@ -66,6 +89,16 @@ export function activate(context: vscode.ExtensionContext) {
     const showCallGraph = vscode.commands.registerCommand(
         'ide-navigator.showCallGraph',
         async () => {
+            const enabled = vscode.workspace
+                .getConfiguration('ideNavigator')
+                .get<boolean>('enableCallGraph', true);
+            if (!enabled) {
+                vscode.window.showInformationMessage(
+                    'Call Graph отключён в настройках (ideNavigator.enableCallGraph)'
+                );
+                return;
+            }
+
             const editor = vscode.window.activeTextEditor;
             if (!editor) {
                 vscode.window.showWarningMessage('Откройте файл для построения графа');
@@ -343,7 +376,7 @@ function getCallGraphHtml(
                 }
             });
 
-            /* ── Легенда ── */
+            /* ── Легенда (только whitelisted типы, без innerHTML для пользовательских данных) ── */
             const usedTypes = new Set(raw.nodes.map(n => n.type));
             const legendEl = document.getElementById('legend');
             const typeLabels = {
@@ -351,11 +384,23 @@ function getCallGraphHtml(
                 'class': 'Class', 'interface': 'Interface', 'struct': 'Struct'
             };
             usedTypes.forEach(t => {
+                /* Сервер уже отсанитизировал, но на клиенте тоже отфильтруем — defense in depth */
+                if (!(t in typeLabels)) return;
                 const c = TYPE_COLORS[t] || DEFAULT_COLOR;
                 const row = document.createElement('div');
                 row.className = 'row';
-                row.innerHTML = '<span class="dot" style="background:' + c.bg + ';box-shadow:0 0 6px ' + c.glow + '"></span>'
-                    + '<span class="label">' + (typeLabels[t] || t) + '</span>';
+
+                const dot = document.createElement('span');
+                dot.className = 'dot';
+                dot.style.background = c.bg;
+                dot.style.boxShadow = '0 0 6px ' + c.glow;
+
+                const label = document.createElement('span');
+                label.className = 'label';
+                label.textContent = typeLabels[t];
+
+                row.appendChild(dot);
+                row.appendChild(label);
                 legendEl.appendChild(row);
             });
         }

@@ -6,9 +6,13 @@ from urllib.parse import urlparse, unquote
 from pygls.lsp.server import LanguageServer
 from lsprotocol import types
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
 logger = logging.getLogger(__name__)
 
+from languages.base import BaseLanguage
 from languages.python_lang import PythonLanguage
 from languages.java_lang import JavaLanguage
 from languages.cpp_lang import CppLanguage
@@ -51,6 +55,39 @@ def get_language(uri: str):
 
 # ── Обработчики LSP ────────────────────────────────────────────────────────
 
+_LOG_LEVELS = {
+    "debug": logging.DEBUG,
+    "info": logging.INFO,
+    "warning": logging.WARNING,
+    "error": logging.ERROR,
+}
+
+
+def _apply_settings(opts: dict) -> None:
+    """Применить настройки из initializationOptions клиента."""
+    if not isinstance(opts, dict):
+        return
+
+    log_level = opts.get("logLevel")
+    if isinstance(log_level, str) and log_level in _LOG_LEVELS:
+        logging.getLogger().setLevel(_LOG_LEVELS[log_level])
+        logger.info(f"Log level set to {log_level}")
+
+    cache_size = opts.get("cacheSize")
+    if isinstance(cache_size, int) and 1 <= cache_size <= 256:
+        BaseLanguage._PARSE_CACHE_MAX = cache_size
+        logger.info(f"Parse cache size set to {cache_size}")
+
+
+@server.feature(types.INITIALIZED)
+def initialized(ls: LanguageServer, params: types.InitializedParams):
+    """Применяем initializationOptions сразу после готовности клиента."""
+    init_opts = getattr(ls, "initialization_options", None)
+    if init_opts is not None:
+        _apply_settings(init_opts)
+    logger.info("IDE Navigator server ready")
+
+
 @server.feature(types.TEXT_DOCUMENT_DID_OPEN)
 def did_open(ls: LanguageServer, params: types.DidOpenTextDocumentParams):
     # Сейчас только логируем. В будущем — триггер для индексации файла
@@ -71,8 +108,13 @@ def document_symbol(
         logger.info(f"Язык не поддерживается: {uri}")
         return []
 
-    doc = ls.workspace.get_text_document(uri)
-    symbols = lang.get_symbols(doc.source)
+    try:
+        doc = ls.workspace.get_text_document(uri)
+        symbols = lang.get_symbols(doc.source)
+    except Exception as e:
+        logger.exception(f"Outline: failed on {uri}: {e}")
+        return []
+
     logger.info(f"Outline: найдено {len(symbols)} символов в {uri}")
     return symbols
 
@@ -89,8 +131,12 @@ def definition(
     if lang is None:
         return None
 
-    doc = ls.workspace.get_text_document(uri)
-    result = lang.find_definition(doc.source, params.position.line, params.position.character)
+    try:
+        doc = ls.workspace.get_text_document(uri)
+        result = lang.find_definition(doc.source, params.position.line, params.position.character)
+    except Exception as e:
+        logger.exception(f"Definition: failed on {uri}: {e}")
+        return None
 
     if result:
         logger.info(f"Definition: найдено в {uri}:{result.start.line + 1}")
@@ -112,11 +158,15 @@ def references(
     if lang is None:
         return []
 
-    doc = ls.workspace.get_text_document(uri)
-    include_decl = params.context.include_declaration
-    ranges = lang.find_references(
-        doc.source, params.position.line, params.position.character, include_decl,
-    )
+    try:
+        doc = ls.workspace.get_text_document(uri)
+        include_decl = params.context.include_declaration
+        ranges = lang.find_references(
+            doc.source, params.position.line, params.position.character, include_decl,
+        )
+    except Exception as e:
+        logger.exception(f"References: failed on {uri}: {e}")
+        return []
 
     logger.info(f"References: найдено {len(ranges)} в {uri}")
     return [types.Location(uri=uri, range=r) for r in ranges]
@@ -134,8 +184,12 @@ def hover(
     if lang is None:
         return None
 
-    doc = ls.workspace.get_text_document(uri)
-    result = lang.get_hover(doc.source, params.position.line, params.position.character)
+    try:
+        doc = ls.workspace.get_text_document(uri)
+        result = lang.get_hover(doc.source, params.position.line, params.position.character)
+    except Exception as e:
+        logger.exception(f"Hover: failed on {uri}: {e}")
+        return None
 
     if result:
         logger.info(f"Hover: {uri}:{params.position.line + 1}")
@@ -211,7 +265,12 @@ def workspace_symbol(
         except OSError:
             continue
 
-        symbols = lang.get_symbols(source)
+        try:
+            symbols = lang.get_symbols(source)
+        except Exception as e:
+            logger.warning(f"Workspace symbols: skip {path}: {e}")
+            continue
+
         uri = path.as_uri()
         all_symbols.extend(_flatten_symbols(symbols, uri))
 
@@ -223,24 +282,71 @@ def workspace_symbol(
     return all_symbols
 
 
+# ── Валидация аргументов кастомных команд ────────────────────────────
+
+def _unwrap_args(args: tuple) -> list:
+    """
+    pygls 2.x может прислать команду как позиционные *args или как один
+    список в args[0]. Нормализуем к плоскому списку.
+    """
+    if len(args) == 1 and isinstance(args[0], (list, tuple)):
+        return list(args[0])
+    return list(args)
+
+
+def _validate_position_args(args: tuple) -> tuple[str, int, int, bool] | None:
+    """
+    Проверить что args = (uri: str, line: int, character: int, [include_decl: bool]).
+    Возвращает нормализованный кортеж или None при любой ошибке.
+    """
+    flat = _unwrap_args(args)
+    if len(flat) < 3:
+        return None
+    uri, line, character = flat[0], flat[1], flat[2]
+    if not isinstance(uri, str) or not isinstance(line, int) or not isinstance(character, int):
+        return None
+    if line < 0 or character < 0:
+        return None
+    include_decl = flat[3] if len(flat) > 3 else True
+    if not isinstance(include_decl, bool):
+        include_decl = bool(include_decl)
+    return uri, line, character, include_decl
+
+
+def _validate_uri_arg(args: tuple) -> str | None:
+    """Проверить что первый аргумент — непустая строка (URI)."""
+    flat = _unwrap_args(args)
+    if not flat:
+        return None
+    uri = flat[0]
+    if not isinstance(uri, str) or not uri:
+        return None
+    return uri
+
+
 # ── References panel (custom command) ────────────────────────────────
 
 @server.command("ide-navigator.references")
 def references_command(ls: LanguageServer, *args):
     """Вернуть референсы + сниппеты для кастомной WebView-панели."""
     logger.info(f"References command, args={args}")
-    if len(args) < 3:
-        return None
 
-    uri, line, character = args[0], args[1], args[2]
-    include_decl = args[3] if len(args) > 3 else True
+    validated = _validate_position_args(args)
+    if validated is None:
+        logger.warning(f"References: invalid args {args}")
+        return None
+    uri, line, character, include_decl = validated
 
     lang = get_language(uri)
     if lang is None:
         return None
 
-    doc = ls.workspace.get_text_document(uri)
-    result = lang.get_references_with_context(doc.source, line, character, include_decl)
+    try:
+        doc = ls.workspace.get_text_document(uri)
+        result = lang.get_references_with_context(doc.source, line, character, include_decl)
+    except Exception as e:
+        logger.exception(f"References: failed on {uri}: {e}")
+        return None
 
     if result:
         result["uri"] = uri
@@ -254,16 +360,24 @@ def references_command(ls: LanguageServer, *args):
 def call_graph_command(ls: LanguageServer, *args):
     """Вернуть граф вызовов для файла."""
     logger.info(f"Call graph command, args={args}")
-    if not args:
-        return {"nodes": [], "edges": []}
+    empty = {"nodes": [], "edges": []}
 
-    uri = args[0]
+    uri = _validate_uri_arg(args)
+    if uri is None:
+        logger.warning(f"Call graph: invalid args {args}")
+        return empty
+
     lang = get_language(uri)
     if lang is None:
-        return {"nodes": [], "edges": []}
+        return empty
 
-    doc = ls.workspace.get_text_document(uri)
-    result = lang.get_call_graph(doc.source)
+    try:
+        doc = ls.workspace.get_text_document(uri)
+        result = lang.get_call_graph(doc.source)
+    except Exception as e:
+        logger.exception(f"Call graph: failed on {uri}: {e}")
+        return empty
+
     logger.info(f"Call graph: {len(result['nodes'])} nodes, {len(result['edges'])} edges in {uri}")
     return result
 

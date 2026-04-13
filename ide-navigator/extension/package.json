@@ -26,7 +26,30 @@
         "key": "shift+f12",
         "when": "editorTextFocus"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "IDE Navigator",
+      "properties": {
+        "ideNavigator.logLevel": {
+          "type": "string",
+          "enum": ["debug", "info", "warning", "error"],
+          "default": "info",
+          "description": "Уровень логирования Python-сервера."
+        },
+        "ideNavigator.cacheSize": {
+          "type": "integer",
+          "default": 32,
+          "minimum": 1,
+          "maximum": 256,
+          "description": "Максимальное количество AST-деревьев в кэше парсера."
+        },
+        "ideNavigator.enableCallGraph": {
+          "type": "boolean",
+          "default": true,
+          "description": "Включить команду построения графа вызовов."
+        }
+      }
+    }
   },
   "scripts": {
     "compile": "tsc -p ./",

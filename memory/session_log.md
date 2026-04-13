@@ -8,6 +8,100 @@ type: project
 
 ---
 
+## Сессия 5 — 2026-04-13 (вторая половина дня)
+
+### Контекст
+По итогам Сессии 4 все 6 фич были готовы. Андрей попросил «что ещё можно
+улучшить — архитектура, безопасность, тесты, процесс». Я предложил Phase 5
+(Backend Quality & Hardening) — security + tests + cache + config. Андрей:
+"делаем всё и по порядку, добавь в план". Сделали всё за одну сессию.
+
+### Что сделано
+
+**Блок 1. Безопасность и устойчивость**
+
+1. Санитизация Call Graph (защита WebView):
+   - `base.py`: добавлены константы `_GRAPH_ALLOWED_TYPES` (whitelist для node.type) и `_GRAPH_MAX_LABEL_LEN = 120`. `get_call_graph()` пропускает все label/type через `safe_label`/`safe_type` перед попаданием в JSON.
+   - `extension.ts`: легенда Call Graph переписана — вместо `row.innerHTML = ... typeLabels[t] || t` теперь `document.createElement` + `textContent`. Только whitelisted типы рендерятся.
+
+2. Валидация аргументов кастомных команд (`server.py`):
+   - Добавлены `_unwrap_args`, `_validate_position_args`, `_validate_uri_arg`. pygls 2.x иногда присылает аргументы как `args[0] = [...]` — нормализуем.
+   - `references_command` и `call_graph_command` теперь возвращают `None`/empty на любые невалидные args, логируют warning.
+
+3. Graceful degradation:
+   - Все LSP-хэндлеры (`document_symbol`, `definition`, `references`, `hover`) обёрнуты в try/except. На любое исключение в tree-sitter — возврат пустого результата + `logger.exception`.
+   - `workspace_symbol`: try/except теперь вокруг `get_symbols()` для каждого файла — один битый файл не валит весь запрос.
+   - Аналогично для `references_command` / `call_graph_command`.
+
+**Блок 2. Тесты (35 юнит-тестов, главное достижение сессии)**
+
+- Setup: `tests/__init__.py`, `tests/conftest.py` (добавляет `server/` в `sys.path`), `pytest.ini`, `requirements-dev.txt` (`pytest>=8.0`)
+- `tests/test_outline.py` — 8 тестов (6 языков + empty source + broken Python doesn't crash)
+- `tests/test_definition.py` — 6 тестов (Python function/class/not-found, Java, Go, TypeScript)
+- `tests/test_references.py` — 6 тестов (include/exclude declaration, snippets, Java)
+- `tests/test_hover.py` — 5 тестов (Markdown content, kind label, language id для python/go/typescript)
+- `tests/test_call_graph.py` — 6 тестов (basic, class containment, empty, type whitelist, label length limit, Java)
+- `tests/test_cache.py` — 4 теста (same tree, different sources, LRU eviction, get_symbols+definition+refs+hover на одном source = 1 запись в кэше)
+- **35 passed in 0.22s**
+
+CI:
+- `.github/workflows/tests.yml` — pytest на push/PR в master, matrix Python 3.11/3.12/3.13. Tree-sitter Swift не ставим (нет на Linux), остальные — руками через pip.
+
+**Блок 3. AST cache + метрики**
+
+- `BaseLanguage.__init__` создаёт `OrderedDict` (LRU) для кэша.
+- `_parse(source)` — публичный метод-обёртка: проверяет кэш, при miss парсит и логирует время в debug. `move_to_end` для LRU. `popitem(last=False)` при переполнении.
+- `_PARSE_CACHE_MAX = 32` — настраивается через `ideNavigator.cacheSize`.
+- Все методы (`get_symbols`, `find_definition`, `find_references`, `get_hover`, `get_references_with_context`) переписаны на `self._parse(source)`. На одном файле теперь 1 парсинг вместо 4-5.
+
+**Блок 4. Конфигурация + status bar**
+
+- `package.json`: новая секция `contributes.configuration`:
+  - `ideNavigator.logLevel` (debug/info/warning/error, default info)
+  - `ideNavigator.cacheSize` (1-256, default 32)
+  - `ideNavigator.enableCallGraph` (bool, default true)
+
+- `extension.ts`:
+  - Status bar item с иконкой `$(symbol-namespace)`, состояния: starting → ready → error
+  - Клик на статус → запускает Show Call Graph
+  - `vscode.workspace.getConfiguration('ideNavigator')` читается при старте и пробрасывается через `clientOptions.initializationOptions`
+  - Команда `showCallGraph` теперь проверяет `enableCallGraph` перед запуском
+
+- `server.py`:
+  - Новый хэндлер `@server.feature(types.INITIALIZED)` → `_apply_settings(initialization_options)`
+  - `_apply_settings` валидирует и применяет logLevel + cacheSize (мутирует `BaseLanguage._PARSE_CACHE_MAX`)
+  - Logging format обновлён: `%(asctime)s [%(levelname)s] %(name)s: %(message)s`
+
+### Файлы, изменённые в этой сессии
+
+```
+ide-navigator/server/server.py                    — validation + try/except + initialized handler
+ide-navigator/server/languages/base.py            — AST cache + Call Graph sanitization
+ide-navigator/server/pytest.ini                   — НОВЫЙ
+ide-navigator/server/requirements-dev.txt         — НОВЫЙ
+ide-navigator/server/tests/__init__.py            — НОВЫЙ
+ide-navigator/server/tests/conftest.py            — НОВЫЙ (sys.path setup)
+ide-navigator/server/tests/test_outline.py        — НОВЫЙ (8 tests)
+ide-navigator/server/tests/test_definition.py     — НОВЫЙ (6 tests)
+ide-navigator/server/tests/test_references.py     — НОВЫЙ (6 tests)
+ide-navigator/server/tests/test_hover.py          — НОВЫЙ (5 tests)
+ide-navigator/server/tests/test_call_graph.py     — НОВЫЙ (6 tests)
+ide-navigator/server/tests/test_cache.py          — НОВЫЙ (4 tests)
+ide-navigator/extension/src/extension.ts          — status bar + config + initOptions + safe legend
+ide-navigator/extension/package.json              — contributes.configuration
+.github/workflows/tests.yml                       — НОВЫЙ (CI на push/PR)
+memory/project_coursework.md                      — Phase 5 план + статусы
+memory/session_log.md                             — эта запись
+```
+
+### Что осталось до конца Phase 5
+Всё реализовано. Из плана не сделано: path traversal в Workspace Symbols (низкий приоритет, упомянут в плане для упоминания в записке), CSP nonce (отказались — `unsafe-inline` оправдан и описан).
+
+### Следующий шаг
+Phase 6 — пояснительная записка к курсовой.
+
+---
+
 ## Сессия 4 — 2026-04-13
 
 ### Что сделано

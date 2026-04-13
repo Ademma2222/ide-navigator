@@ -5,9 +5,15 @@
 и реализует два метода: get_parser() и _extract_symbols().
 Смотри python_lang.py как пример.
 """
+import logging
+import time
 from abc import ABC, abstractmethod
+from collections import OrderedDict
 from tree_sitter import Parser
 from lsprotocol import types
+
+
+logger = logging.getLogger(__name__)
 
 
 class BaseLanguage(ABC):
@@ -16,15 +22,45 @@ class BaseLanguage(ABC):
     # Переопределяется в каждом языковом наследнике.
     LANGUAGE_ID: str = "text"
 
+    # Максимальное количество разобранных AST-деревьев в кэше.
+    # Outline/Definition/References/Hover на одном файле парсят AST четырежды —
+    # кэш даёт 4x ускорение без заметного расхода памяти.
+    _PARSE_CACHE_MAX = 32
+
+    def __init__(self) -> None:
+        # OrderedDict как простой LRU: ключ — сам source, значение — Tree.
+        # Кэш привязан к экземпляру класса (в LANGUAGE_MAP они — синглтоны).
+        self._parse_cache: OrderedDict[str, object] = OrderedDict()
+
     @abstractmethod
     def get_parser(self) -> Parser:
         """Вернуть настроенный парсер tree-sitter для этого языка."""
         pass
 
+    def _parse(self, source: str):
+        """
+        Разобрать исходник через tree-sitter с LRU-кэшем.
+        Все методы класса (get_symbols, find_definition и т.д.) должны
+        использовать этот метод вместо `self.get_parser().parse(...)`.
+        """
+        cached = self._parse_cache.get(source)
+        if cached is not None:
+            self._parse_cache.move_to_end(source)
+            return cached
+
+        start = time.perf_counter()
+        tree = self.get_parser().parse(bytes(source, "utf-8"))
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        logger.debug(f"parse[{self.LANGUAGE_ID}]: {len(source)} bytes in {elapsed_ms:.1f}ms")
+
+        self._parse_cache[source] = tree
+        if len(self._parse_cache) > self._PARSE_CACHE_MAX:
+            self._parse_cache.popitem(last=False)
+        return tree
+
     def get_symbols(self, source: str) -> list[types.DocumentSymbol]:
         """Главный метод — извлечь все символы из исходного кода."""
-        parser = self.get_parser()
-        tree = parser.parse(bytes(source, "utf-8"))
+        tree = self._parse(source)
         return self._extract_symbols(tree.root_node)
 
     @abstractmethod
@@ -51,8 +87,7 @@ class BaseLanguage(ABC):
 
     def find_definition(self, source: str, line: int, character: int) -> types.Range | None:
         """Найти определение символа под курсором (внутри одного файла)."""
-        parser = self.get_parser()
-        tree = parser.parse(bytes(source, "utf-8"))
+        tree = self._parse(source)
 
         # Находим самый глубокий узел в позиции курсора
         node = tree.root_node.descendant_for_point_range(
@@ -89,8 +124,7 @@ class BaseLanguage(ABC):
         self, source: str, line: int, character: int, include_declaration: bool = True,
     ) -> list[types.Range]:
         """Найти все вхождения идентификатора под курсором в файле."""
-        parser = self.get_parser()
-        tree = parser.parse(bytes(source, "utf-8"))
+        tree = self._parse(source)
 
         node = tree.root_node.descendant_for_point_range(
             (line, character), (line, character)
@@ -141,8 +175,7 @@ class BaseLanguage(ABC):
 
     def get_hover(self, source: str, line: int, character: int) -> types.Hover | None:
         """Информация о символе при наведении курсора."""
-        parser = self.get_parser()
-        tree = parser.parse(bytes(source, "utf-8"))
+        tree = self._parse(source)
 
         node = tree.root_node.descendant_for_point_range(
             (line, character), (line, character)
@@ -194,8 +227,7 @@ class BaseLanguage(ABC):
         исходника для каждого вхождения. Используется кастомной командой
         ide-navigator.references → Obsidian-style WebView-панель.
         """
-        parser = self.get_parser()
-        tree = parser.parse(bytes(source, "utf-8"))
+        tree = self._parse(source)
 
         node = tree.root_node.descendant_for_point_range(
             (line, character), (line, character)
@@ -242,6 +274,16 @@ class BaseLanguage(ABC):
         types.SymbolKind.Struct: "struct",
     }
 
+    # Белый список допустимых типов в графе — всё что не в списке → "function".
+    # Защищает WebView от инъекций: даже если tree-sitter выдаст экзотический
+    # node.type, в JSON попадёт только безопасное значение.
+    _GRAPH_ALLOWED_TYPES = frozenset({
+        "function", "method", "constructor", "class", "interface", "struct",
+    })
+
+    # Максимальная длина идентификатора — защита от DoS и мусора в UI.
+    _GRAPH_MAX_LABEL_LEN = 120
+
     def get_call_graph(self, source: str) -> dict:
         """Построить граф вызовов: какие функции вызывают какие."""
         parser = self.get_parser()
@@ -266,11 +308,25 @@ class BaseLanguage(ABC):
 
         # Все участники графа: функции + классы (у которых есть методы)
         all_ids = known_funcs | {n for n in symbol_map if symbol_map[n] in ("class", "interface", "struct")}
+
+        def safe_label(name: str) -> str:
+            return name[:self._GRAPH_MAX_LABEL_LEN]
+
+        def safe_type(raw_type: str) -> str:
+            return raw_type if raw_type in self._GRAPH_ALLOWED_TYPES else "function"
+
         nodes = [
-            {"id": n, "label": n, "type": symbol_map.get(n, "function")}
+            {
+                "id": safe_label(n),
+                "label": safe_label(n),
+                "type": safe_type(symbol_map.get(n, "function")),
+            }
             for n in sorted(all_ids)
         ]
-        edge_list = [{"from": a, "to": b} for a, b in sorted(edges)]
+        edge_list = [
+            {"from": safe_label(a), "to": safe_label(b)}
+            for a, b in sorted(edges)
+        ]
 
         return {"nodes": nodes, "edges": edge_list}
 
