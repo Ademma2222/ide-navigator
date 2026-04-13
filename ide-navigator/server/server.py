@@ -1,10 +1,17 @@
 import logging
 import os
+import sys
 from pathlib import Path
 from urllib.parse import urlparse, unquote
 
 from pygls.lsp.server import LanguageServer
 from lsprotocol import types
+
+# Windows: stderr по умолчанию использует консольную кодировку (cp1251 для RU),
+# а VS Code читает LSP-канал как UTF-8 → кириллица превращается в ��.
+# reconfigure должен идти ДО basicConfig, чтобы StreamHandler подхватил новый поток.
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -70,7 +77,11 @@ def _apply_settings(opts: dict) -> None:
 
     log_level = opts.get("logLevel")
     if isinstance(log_level, str) and log_level in _LOG_LEVELS:
-        logging.getLogger().setLevel(_LOG_LEVELS[log_level])
+        level = _LOG_LEVELS[log_level]
+        root = logging.getLogger()
+        root.setLevel(level)
+        for h in root.handlers:
+            h.setLevel(level)
         logger.info(f"Log level set to {log_level}")
 
     cache_size = opts.get("cacheSize")
@@ -79,12 +90,21 @@ def _apply_settings(opts: dict) -> None:
         logger.info(f"Parse cache size set to {cache_size}")
 
 
+@server.feature(types.INITIALIZE)
+def on_initialize(ls: LanguageServer, params: types.InitializeParams):
+    """Читаем initializationOptions напрямую из initialize-запроса.
+
+    pygls 2.x даёт встроиться в свой lsp_initialize через user_handler:
+    наши настройки успевают примениться до того, как сервер начнёт
+    отвечать на textDocument/*-запросы.
+    """
+    opts = params.initialization_options
+    if isinstance(opts, dict):
+        _apply_settings(opts)
+
+
 @server.feature(types.INITIALIZED)
 def initialized(ls: LanguageServer, params: types.InitializedParams):
-    """Применяем initializationOptions сразу после готовности клиента."""
-    init_opts = getattr(ls, "initialization_options", None)
-    if init_opts is not None:
-        _apply_settings(init_opts)
     logger.info("IDE Navigator server ready")
 
 

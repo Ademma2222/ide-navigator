@@ -8,6 +8,100 @@ type: project
 
 ---
 
+## Сессия 6 — 2026-04-13 (вечер, пост-верификация Phase 5)
+
+### Контекст
+После коммита Phase 5 (`ba21477`) Андрей запустил плагин под F5 для ручной
+проверки. Выявились три реальные проблемы, все починены в этой же сессии.
+
+### Проблема 1: `initializationOptions` не применялись вообще
+**Симптом:** Андрей менял `ideNavigator.logLevel` на `debug` и обратно, но
+в Output-канале "IDE Navigator" не было никакой разницы.
+
+**Root cause:** pygls 2.x **не хранит** атрибут `ls.initialization_options`
+на объекте сервера — проверил `dir(LanguageServer())`, его реально нет.
+Мой код `getattr(ls, "initialization_options", None)` всегда возвращал `None`,
+поэтому `_apply_settings` никогда не получала настроек. Ни logLevel, ни
+cacheSize не применялись — плагин всегда работал на дефолтах.
+
+**Решение:** Хукнуть `types.INITIALIZE` и читать `params.initialization_options`
+напрямую. В pygls 2.x это разрешено — в `lsp_initialize.py` есть строка
+`yield user_handler, (params,), None`, которая специально даёт пользователю
+встроиться ДО того как сервер отправит capabilities.
+
+```python
+@server.feature(types.INITIALIZE)
+def on_initialize(ls: LanguageServer, params: types.InitializeParams):
+    opts = params.initialization_options
+    if isinstance(opts, dict):
+        _apply_settings(opts)
+```
+
+`@server.feature(types.INITIALIZED)` оставил только для строки "server ready".
+
+Дополнительно: `_apply_settings` теперь проставляет уровень и на root, и на
+все его handlers (`for h in root.handlers: h.setLevel(level)`) — belt &
+suspenders на случай если pygls добавляет handlers с явным уровнем.
+
+### Проблема 2: `get_call_graph` парсил мимо кэша
+При grep'е `parser.parse` по `languages/` нашёлся один раритет — в
+`base.py:290` (метод `get_call_graph`) стоял прямой `parser.parse(bytes(...))`,
+а не `self._parse(source)`. Все остальные методы (Outline/Definition/References/Hover)
+я перевёл на кэш, а Call Graph забыл. Пофикшено — теперь и он идёт через кэш.
+
+### Проблема 3: `[DEBUG] languages.base: parse[...]` не появлялись в логах
+Андрей менял `logLevel=debug`, видел `[DEBUG] pygls.server: ...` строки
+(значит уровень применился корректно после фикса #1), но строк про парсинг
+из `languages.base` не находил.
+
+**Причина:** кэш работает слишком хорошо. Когда Outline открыт в VS Code,
+первый парс происходит на `textDocument/documentSymbol` при открытии файла,
+source кэшируется. Все последующие hover/Ctrl+click на том же (неизменённом)
+файле — cache hit → нет лога. Одна-единственная parse-строка теряется среди
+десятков pygls-строк, её легко не заметить.
+
+**Решение:** Поднять `parse[LANG]: N bytes in X ms` с DEBUG до INFO. Cache
+miss — редкое событие (один раз на версию файла), шум минимальный. Зато
+в дефолтных логах теперь сразу видно сколько парсов сервер реально сделал —
+наглядное доказательство что кэш работает. Андрей нашёл логи через фильтр
+поиска в Output:
+- `parse[python]: 79941 bytes in 11.2ms` — большой файл (80 KB), один раз
+- `parse[python]: 7-25 bytes in 0.0ms` — это Андрей печатал в скретч-файле,
+  каждое нажатие клавиши = новая версия source = новый ключ кэша = новый парс
+- `parse[python]: 0 bytes in 0.0ms` — парс пустого файла, не падает
+
+Реальные цифры для курсовой: парсинг Python-файла 80 KB = 11.2 ms
+(≈ 7 MB/s throughput tree-sitter).
+
+### Проблема 4: кракозябры в логах (кириллица → `��`)
+**Причина:** Windows по умолчанию пишет `sys.stderr` в `cp1251`, а VS Code
+читает LSP-канал как UTF-8. Все русские строки в логах (`Definition: найдено
+определение на строке`) превращались в `��`.
+
+**Решение:** В `server.py` до `logging.basicConfig()` добавил
+```python
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+```
+Проверка через `hasattr` — для совместимости со старыми Python. На Python 3.7+
+метод есть всегда.
+
+### Результат сессии 6
+- pygls 2.x INITIALIZE-хук (`params.initialization_options` — правильный путь)
+- `get_call_graph` через AST-кэш (было единственное исключение)
+- `parse[...]` лог поднят до INFO — видимое доказательство работы кэша
+- UTF-8 stderr reconfigure — русские логи читаются нормально
+- 35/35 тестов по-прежнему зелёные
+- Реальная цифра парсинга для пояснительной: **11.2 ms на 80 KB Python-файл**
+
+### Следующий шаг
+Phase 6 — пояснительная записка. Структура согласована (7 разделов, ~30-40
+страниц): Введение → Теория (LSP + tree-sitter) → Архитектура → Реализация
+6 фич → Качество бэкенда (security + тесты + кэш + config) → Результаты →
+Заключение.
+
+---
+
 ## Сессия 5 — 2026-04-13 (вторая половина дня)
 
 ### Контекст

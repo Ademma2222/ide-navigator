@@ -107,6 +107,26 @@ Python, Java, C++, Go, JavaScript, TypeScript, Swift (опциональный �
 - VS Code settings: `ideNavigator.logLevel`, `cacheSize`, `enableCallGraph` через `initializationOptions`
 - Status bar item с состояниями starting → ready → error
 
+### Пост-верификация Phase 5 (сессия 6 вечером)
+При ручной проверке под F5 всплыли 4 бага — все починены в той же сессии:
+
+1. **`initializationOptions` не применялись вообще.** pygls 2.x не хранит
+   атрибут `ls.initialization_options`. Правильный путь — хукнуть
+   `@server.feature(types.INITIALIZE)` и читать `params.initialization_options`.
+   pygls специально даёт пользователю встроиться до отправки capabilities.
+2. **`get_call_graph` парсил мимо кэша** — единственный метод, который
+   остался с прямым `parser.parse(bytes(...))`. Переведён на `self._parse(source)`.
+3. **`parse[LANG]: ... ms` лог поднят с DEBUG до INFO.** Cache miss — редкое
+   событие (1 раз на версию файла), шума мало, зато в дефолтных логах сразу
+   виден пруф работы кэша. Реальная цифра для курсовой: **11.2 ms на 80 KB
+   Python-файл** (≈ 7 MB/s throughput tree-sitter).
+4. **UTF-8 stderr.** На Windows `sys.stderr` пишет в cp1251, VS Code читает
+   канал как UTF-8 → кракозябры. Фикс: `sys.stderr.reconfigure(encoding="utf-8")`
+   до `logging.basicConfig()` в `server.py`.
+
+**Urok for pygls 2.x:** `getattr(ls, "initialization_options", None)` — это
+всегда `None`. Атрибута нет. Читать настройки только из `params` в INITIALIZE-хуке.
+
 ---
 
 ## Repository

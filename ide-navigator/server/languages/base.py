@@ -51,7 +51,9 @@ class BaseLanguage(ABC):
         start = time.perf_counter()
         tree = self.get_parser().parse(bytes(source, "utf-8"))
         elapsed_ms = (time.perf_counter() - start) * 1000
-        logger.debug(f"parse[{self.LANGUAGE_ID}]: {len(source)} bytes in {elapsed_ms:.1f}ms")
+        # INFO, а не DEBUG: cache miss — редкое событие (один раз на версию файла),
+        # а наглядное доказательство что кэш работает важно для курсовой.
+        logger.info(f"parse[{self.LANGUAGE_ID}]: {len(source)} bytes in {elapsed_ms:.1f}ms")
 
         self._parse_cache[source] = tree
         if len(self._parse_cache) > self._PARSE_CACHE_MAX:
@@ -286,8 +288,7 @@ class BaseLanguage(ABC):
 
     def get_call_graph(self, source: str) -> dict:
         """Построить граф вызовов: какие функции вызывают какие."""
-        parser = self.get_parser()
-        tree = parser.parse(bytes(source, "utf-8"))
+        tree = self._parse(source)
         root = tree.root_node
 
         # Собираем все символы (включая классы) с их типами
