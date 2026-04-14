@@ -113,7 +113,11 @@ jobs:
 
       - name: Package .vsix
         working-directory: ide-navigator/extension
-        run: npx @vscode/vsce package --target ${{ matrix.target }} --skip-license --allow-package-all-secrets
+        # Pin to vsce 2.x: the 3.x secret scanner crashes on PyInstaller-built
+        # Mach-O binaries (exits with "Error occurred while scanning secrets"
+        # even with --allow-package-all-secrets, since the scanner itself
+        # errors out before the allowlist is consulted). 2.x has no scanner.
+        run: npx @vscode/vsce@^2.32.0 package --target ${{ matrix.target }} --skip-license
 
       - name: Upload .vsix artifact
         uses: actions/upload-artifact@v4
