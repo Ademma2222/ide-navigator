@@ -53,35 +53,52 @@ Python Language Server (pygls)
 
 ## Установка
 
-### Требования
+Расширение поставляется как самодостаточный `.vsix` со встроенным Python-сервером, собранным через PyInstaller. Никаких локальных зависимостей (Python, Node, tree-sitter) для конечного пользователя не требуется.
 
-- Python 3.11 или новее
-- Node.js 18 или новее
-- Visual Studio Code 1.85 или новее
+### Быстрый старт
 
-### Шаги
+1. Скачайте `.vsix` для своей платформы со [страницы релизов](https://github.com/Ademma2222/ide-navigator/releases/latest):
+   - **Windows x64** — `ide-navigator-win32-x64-<версия>.vsix`
+   - **macOS Apple Silicon** — `ide-navigator-darwin-arm64-<версия>.vsix`
+2. Установите одной командой:
+   ```bash
+   code --install-extension ide-navigator-<target>-<версия>.vsix
+   ```
+   Либо через интерфейс VS Code: `Ctrl+Shift+P` → `Extensions: Install from VSIX...`.
+3. Перезапустите редактор и откройте любой поддерживаемый файл.
+
+### Настройки расширения
+
+| Параметр | Значения | Описание |
+|----------|----------|----------|
+| `ideNavigator.logLevel` | `debug` / `info` / `warning` / `error` | Уровень логирования сервера |
+| `ideNavigator.cacheSize` | `1..256` (по умолчанию `32`) | Максимум AST-деревьев в кэше парсера |
+| `ideNavigator.enableCallGraph` | `true` / `false` | Включает команду `Show Call Graph` |
+
+### Сборка из исходников (для разработчиков)
 
 ```bash
-# Клонирование репозитория
 git clone https://github.com/Ademma2222/ide-navigator.git
 cd ide-navigator
 
-# Настройка Python-сервера
+# Python-сервер
 cd server
 python -m venv venv
-source venv/Scripts/activate    # Windows
+source venv/Scripts/activate    # Windows (git-bash)
 source venv/bin/activate        # macOS / Linux
 pip install -r requirements.txt
 
-# Настройка VS Code расширения
+# VS Code расширение
 cd ../extension
 npm install
 npm run compile
 ```
 
-### Запуск в режиме разработки
+Откройте папку `ide-navigator/extension` в VS Code и нажмите `F5` — откроется окно Extension Development Host, в котором расширение запустится с локальным Python-сервером из `../server`.
 
-Откройте папку `ide-navigator/extension` в VS Code и нажмите `F5`. Откроется отдельное окно Extension Development Host с активным плагином — в нём можно проверять работу расширения на любом проекте.
+### CI и релизы
+
+Пайплайн [`.github/workflows/release.yml`](.github/workflows/release.yml) на каждый тэг `v*` собирает PyInstaller-бинарь сервера на Windows и macOS Apple Silicon, упаковывает platform-specific `.vsix` и публикует их в GitHub Release.
 
 ---
 
