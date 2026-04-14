@@ -1,0 +1,157 @@
+name: Release
+
+# Build the PyInstaller server binary on Windows + Mac (Intel / Apple Silicon),
+# package a platform-specific .vsix for each target, and (on tag push) publish
+# a GitHub Release with all three .vsix files attached.
+#
+# No secrets required — uses the built-in GITHUB_TOKEN for release creation.
+
+on:
+  push:
+    branches: [master]
+    tags: ['v*']
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-server:
+    name: Build server (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: win32-x64
+          - os: macos-13
+            target: darwin-x64
+          - os: macos-14
+            target: darwin-arm64
+    defaults:
+      run:
+        working-directory: ide-navigator/server
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install server dependencies
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          pip install pygls==2.1.1 tree-sitter==0.25.2 \
+            tree-sitter-python tree-sitter-java tree-sitter-cpp \
+            tree-sitter-go tree-sitter-javascript tree-sitter-typescript
+          pip install pyinstaller
+
+      - name: Install Swift grammar (macOS only)
+        if: startsWith(matrix.os, 'macos')
+        shell: bash
+        continue-on-error: true
+        run: pip install tree-sitter-swift
+
+      - name: Build server binary
+        run: pyinstaller server.spec --clean --noconfirm
+
+      - name: Archive build output (preserves Unix exec bits)
+        shell: bash
+        run: |
+          cd dist
+          tar -czf ../server-${{ matrix.target }}.tar.gz ide-navigator-server
+
+      - name: Upload server artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-${{ matrix.target }}
+          path: ide-navigator/server/server-${{ matrix.target }}.tar.gz
+          retention-days: 7
+
+  package-vsix:
+    name: Package .vsix (${{ matrix.target }})
+    needs: build-server
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [win32-x64, darwin-x64, darwin-arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Download server binary
+        uses: actions/download-artifact@v4
+        with:
+          name: server-${{ matrix.target }}
+          path: ide-navigator/server
+
+      - name: Extract server into bundled folder
+        run: |
+          mkdir -p ide-navigator/extension/bundled/server/${{ matrix.target }}
+          tar -xzf ide-navigator/server/server-${{ matrix.target }}.tar.gz \
+            -C ide-navigator/extension/bundled/server/${{ matrix.target }} \
+            --strip-components=1
+
+      - name: Install extension dependencies
+        working-directory: ide-navigator/extension
+        run: npm install
+
+      - name: Compile TypeScript
+        working-directory: ide-navigator/extension
+        run: npm run compile
+
+      - name: Package .vsix
+        working-directory: ide-navigator/extension
+        run: npx @vscode/vsce package --target ${{ matrix.target }} --skip-license
+
+      - name: Upload .vsix artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vsix-${{ matrix.target }}
+          path: ide-navigator/extension/*.vsix
+          retention-days: 30
+
+  release:
+    name: Create GitHub Release
+    needs: package-vsix
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all .vsix artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: vsix-*
+          merge-multiple: true
+          path: vsix
+
+      - name: Create GitHub Release with .vsix files
+        uses: softprops/action-gh-release@v2
+        with:
+          files: vsix/*.vsix
+          generate_release_notes: true
+          body: |
+            ## Installation
+
+            Download the `.vsix` file for your platform and install it:
+
+            ```bash
+            code --install-extension ide-navigator-<target>-<version>.vsix
+            ```
+
+            Or use VS Code UI: `Ctrl+Shift+P` → `Extensions: Install from VSIX...`
+
+            ### Platform targets
+
+            - **Windows x64:** `ide-navigator-win32-x64-*.vsix`
+            - **macOS Intel:** `ide-navigator-darwin-x64-*.vsix`
+            - **macOS Apple Silicon:** `ide-navigator-darwin-arm64-*.vsix`

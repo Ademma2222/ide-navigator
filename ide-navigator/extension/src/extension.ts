@@ -1,3 +1,4 @@
+import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import {
@@ -30,26 +31,33 @@ export function activate(context: vscode.ExtensionContext) {
         enableCallGraph: config.get<boolean>('enableCallGraph', true),
     };
 
-    // Путь к Python серверу
-    const serverPath = context.asAbsolutePath(
-        path.join('..', 'server', 'server.py')
+    // Путь к бандленому серверу внутри расширения (bundled/server/<target>/…).
+    // Таргет соответствует vsce --target: win32-x64, darwin-x64, darwin-arm64.
+    const target = `${process.platform}-${process.arch}`;
+    const binaryName = process.platform === 'win32'
+        ? 'ide-navigator-server.exe'
+        : 'ide-navigator-server';
+    const serverBinary = context.asAbsolutePath(
+        path.join('bundled', 'server', target, binaryName)
     );
 
-    // Найти python в venv (Windows: Scripts/python.exe, Mac/Linux: bin/python)
-    const isWindows = process.platform === 'win32';
-    const pythonPath = context.asAbsolutePath(
-        isWindows
-            ? path.join('..', 'server', 'venv', 'Scripts', 'python.exe')
-            : path.join('..', 'server', 'venv', 'bin', 'python')
-    );
+    console.log('IDE Navigator: target  =', target);
+    console.log('IDE Navigator: binary  =', serverBinary);
 
-    console.log('IDE Navigator: python =', pythonPath);
-    console.log('IDE Navigator: server =', serverPath);
+    // На Mac/Linux .vsix-zip может потерять exec-бит при распаковке VS Code.
+    // Ставим его руками перед запуском (no-op на Windows).
+    if (process.platform !== 'win32') {
+        try {
+            fs.chmodSync(serverBinary, 0o755);
+        } catch (err) {
+            console.warn('IDE Navigator: chmod failed', err);
+        }
+    }
 
-    // Настройки запуска сервера (внешний процесс — без TransportKind)
+    // Настройки запуска сервера (standalone бинарь, без Python)
     const serverOptions: ServerOptions = {
-        command: pythonPath,
-        args: [serverPath]
+        command: serverBinary,
+        args: []
     };
 
     // Языки которые обрабатывает плагин
