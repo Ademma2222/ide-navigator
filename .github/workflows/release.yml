@@ -113,7 +113,7 @@ jobs:
 
       - name: Package .vsix
         working-directory: ide-navigator/extension
-        run: npx @vscode/vsce package --target ${{ matrix.target }} --skip-license
+        run: npx @vscode/vsce package --target ${{ matrix.target }} --skip-license --allow-package-all-secrets
 
       - name: Upload .vsix artifact
         uses: actions/upload-artifact@v4
