@@ -78,7 +78,6 @@
     "watch": "tsc -watch -p ./",
     "vscode:prepublish": "npm run compile",
     "package:win32-x64": "vsce package --target win32-x64",
-    "package:darwin-x64": "vsce package --target darwin-x64",
     "package:darwin-arm64": "vsce package --target darwin-arm64"
   },
   "dependencies": {

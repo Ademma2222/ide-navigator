@@ -1,8 +1,11 @@
 name: Release
 
-# Build the PyInstaller server binary on Windows + Mac (Intel / Apple Silicon),
+# Build the PyInstaller server binary on Windows + macOS (Apple Silicon),
 # package a platform-specific .vsix for each target, and (on tag push) publish
-# a GitHub Release with all three .vsix files attached.
+# a GitHub Release with the .vsix files attached.
+#
+# Note: Intel Mac (darwin-x64) is not built — GitHub retired the macos-13
+# runners in December 2025. Apple Silicon covers all Macs sold since 2020.
 #
 # No secrets required — uses the built-in GITHUB_TOKEN for release creation.
 
@@ -27,8 +30,6 @@ jobs:
         include:
           - os: windows-latest
             target: win32-x64
-          - os: macos-13
-            target: darwin-x64
           - os: macos-14
             target: darwin-arm64
     defaults:
@@ -80,7 +81,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [win32-x64, darwin-x64, darwin-arm64]
+        target: [win32-x64, darwin-arm64]
     steps:
       - uses: actions/checkout@v4
 
@@ -153,5 +154,4 @@ jobs:
             ### Platform targets
 
             - **Windows x64:** `ide-navigator-win32-x64-*.vsix`
-            - **macOS Intel:** `ide-navigator-darwin-x64-*.vsix`
             - **macOS Apple Silicon:** `ide-navigator-darwin-arm64-*.vsix`

@@ -32,7 +32,7 @@ export function activate(context: vscode.ExtensionContext) {
     };
 
     // Путь к бандленому серверу внутри расширения (bundled/server/<target>/…).
-    // Таргет соответствует vsce --target: win32-x64, darwin-x64, darwin-arm64.
+    // Таргет соответствует vsce --target: win32-x64, darwin-arm64.
     const target = `${process.platform}-${process.arch}`;
     const binaryName = process.platform === 'win32'
         ? 'ide-navigator-server.exe'

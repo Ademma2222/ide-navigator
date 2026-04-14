@@ -20,7 +20,6 @@ The extension bundles a standalone LSP server — **no Python required**. Instal
 Download the `.vsix` file for your platform from the [latest release](https://github.com/Ademma2222/ide-navigator/releases/latest):
 
 - **Windows x64:** `ide-navigator-win32-x64-*.vsix`
-- **macOS Intel:** `ide-navigator-darwin-x64-*.vsix`
 - **macOS Apple Silicon:** `ide-navigator-darwin-arm64-*.vsix`
 
 Then install it:
