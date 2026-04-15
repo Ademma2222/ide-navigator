@@ -56,7 +56,11 @@ class PythonLanguage(BaseLanguage):
                             name_node=left,
                         ))
 
-            elif child.type in ("module", "block"):
+            elif child.type in ("module", "block", "decorated_definition"):
+                # decorated_definition: @decorator ... def foo() — внутри лежит
+                # function_definition или class_definition, которое нужно
+                # обработать тем же проходом. Без этого @property / @staticmethod
+                # / @app.route-функции не попадают в Outline и Call Graph.
                 symbols.extend(self._extract_symbols(child, inside_class))
 
         return symbols

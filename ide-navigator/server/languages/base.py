@@ -286,29 +286,77 @@ class BaseLanguage(ABC):
     # Максимальная длина идентификатора — защита от DoS и мусора в UI.
     _GRAPH_MAX_LABEL_LEN = 120
 
+    # Узлы tree-sitter, считающиеся точками ветвления для цикломатической
+    # сложности по McCabe (упрощённая формула: 1 + число branch points).
+    #
+    # Ключевые слова-токены (if, for, while и т.п.) НЕ включаем — tree-sitter
+    # кладёт их как детей statement-узла и мы бы двойным счётом ловили каждое
+    # ветвление. Считаем только структурные узлы: *_statement / *_clause /
+    # *_expression (для тернарников). else_clause не считается — это
+    # fallthrough-ветка, она не добавляет путь по McCabe.
+    _BRANCH_NODE_TYPES = frozenset({
+        # if / elif
+        "if_statement", "elif_clause",
+        # Циклы
+        "for_statement", "for_in_statement", "for_of_statement",
+        "for_range_loop",
+        "while_statement", "do_statement", "do_while_statement",
+        "repeat_while_statement",
+        # switch / case — считаем ТОЛЬКО cases, сам switch не добавляет путь
+        # если в нём нет альтернатив (default без case = 1 путь).
+        "case_statement", "case_clause", "switch_case",
+        "switch_block_statement_group",  # Java: обёртка над каждым case-блоком
+        "expression_case", "type_case", "communication_case",
+        # Исключения (сам try/except не считаем — только handler-clause)
+        "except_clause", "catch_clause",
+        # Тернарник
+        "conditional_expression", "ternary_expression",
+        # Go select / Swift guard
+        "select_statement", "guard_statement",
+    })
+
     def get_call_graph(self, source: str) -> dict:
-        """Построить граф вызовов: какие функции вызывают какие."""
+        """Построить граф вызовов: какие функции вызывают какие.
+
+        Возвращает:
+          nodes: [{id, label, type, line, character, endLine, endCharacter, complexity}]
+            — координаты указывают на идентификатор (selection_range),
+              чтобы клик в webview открывал файл ровно на имени символа.
+            — complexity: cyclomatic complexity по McCabe (1 + число ветвлений).
+          edges: [{from, to, kind}]
+            — kind="call" (вызов функции/метода) или "contains"
+              (класс → его метод/конструктор).
+        """
         tree = self._parse(source)
         root = tree.root_node
 
-        # Собираем все символы (включая классы) с их типами
+        # Собираем все символы (включая классы) с их типами и позициями
         symbols = self._extract_symbols(root)
-        symbol_map: dict[str, str] = {}  # name → type string
-        self._collect_all_symbol_types(symbols, symbol_map)
+        # name → {"type": str, "range": lsp Range (selection_range)}
+        symbol_info: dict[str, dict] = {}
+        self._collect_symbol_info(symbols, symbol_info)
 
         # Имена функций/методов для отслеживания вызовов
         known_funcs: set[str] = set()
         self._collect_callable_names(symbols, known_funcs)
 
         # Связи класс → его методы
-        edges: set[tuple[str, str]] = set()
-        self._collect_class_edges(symbols, edges)
+        contain_edges: set[tuple[str, str]] = set()
+        self._collect_class_edges(symbols, contain_edges)
 
         # Обходим AST, отслеживая текущую функцию, собираем рёбра вызовов
-        self._walk_calls(root, None, known_funcs, edges)
+        call_edges: set[tuple[str, str]] = set()
+        self._walk_calls(root, None, known_funcs, call_edges)
+
+        # Цикломатическая сложность по имени функции (один проход по AST)
+        complexity_map: dict[str, int] = {}
+        self._collect_complexity(root, complexity_map)
 
         # Все участники графа: функции + классы (у которых есть методы)
-        all_ids = known_funcs | {n for n in symbol_map if symbol_map[n] in ("class", "interface", "struct")}
+        container_types = ("class", "interface", "struct")
+        all_ids = known_funcs | {
+            n for n, info in symbol_info.items() if info["type"] in container_types
+        }
 
         def safe_label(name: str) -> str:
             return name[:self._GRAPH_MAX_LABEL_LEN]
@@ -316,18 +364,33 @@ class BaseLanguage(ABC):
         def safe_type(raw_type: str) -> str:
             return raw_type if raw_type in self._GRAPH_ALLOWED_TYPES else "function"
 
-        nodes = [
-            {
+        nodes = []
+        for n in sorted(all_ids):
+            info = symbol_info.get(n, {})
+            node = {
                 "id": safe_label(n),
                 "label": safe_label(n),
-                "type": safe_type(symbol_map.get(n, "function")),
+                "type": safe_type(info.get("type", "function")),
             }
-            for n in sorted(all_ids)
-        ]
-        edge_list = [
-            {"from": safe_label(a), "to": safe_label(b)}
-            for a, b in sorted(edges)
-        ]
+            rng = info.get("range")
+            if rng is not None:
+                node["line"] = rng.start.line
+                node["character"] = rng.start.character
+                node["endLine"] = rng.end.line
+                node["endCharacter"] = rng.end.character
+            if n in complexity_map:
+                node["complexity"] = complexity_map[n]
+            nodes.append(node)
+
+        edge_list: list[dict] = []
+        for a, b in sorted(call_edges):
+            edge_list.append({
+                "from": safe_label(a), "to": safe_label(b), "kind": "call",
+            })
+        for a, b in sorted(contain_edges):
+            edge_list.append({
+                "from": safe_label(a), "to": safe_label(b), "kind": "contains",
+            })
 
         return {"nodes": nodes, "edges": edge_list}
 
@@ -343,16 +406,24 @@ class BaseLanguage(ABC):
                                       types.SymbolKind.Constructor):
                         edges.add((s.name, child.name))
 
-    def _collect_all_symbol_types(
-        self, symbols: list[types.DocumentSymbol], result: dict[str, str],
+    def _collect_symbol_info(
+        self, symbols: list[types.DocumentSymbol], result: dict[str, dict],
     ) -> None:
-        """Собрать все символы с их типами для графа."""
+        """Собрать все символы с типами и позициями идентификатора (selection_range).
+
+        Если одно имя встречается несколько раз (перегрузка/коллизия), остаётся
+        первая встреченная позиция — клик-навигация прыгнет к ней. Полноценная
+        дизамбигуация имён вида Class.method — отдельная задача из бэклога.
+        """
         for s in symbols:
             kind_str = self._GRAPH_KIND_MAP.get(s.kind)
-            if kind_str:
-                result[s.name] = kind_str
+            if kind_str and s.name not in result:
+                result[s.name] = {
+                    "type": kind_str,
+                    "range": s.selection_range,
+                }
             if s.children:
-                self._collect_all_symbol_types(s.children, result)
+                self._collect_symbol_info(s.children, result)
 
     def _collect_callable_names(
         self, symbols: list[types.DocumentSymbol], result: set[str],
@@ -364,6 +435,38 @@ class BaseLanguage(ABC):
                 result.add(s.name)
             if s.children:
                 self._collect_callable_names(s.children, result)
+
+    def _collect_complexity(self, root, result: dict[str, int]) -> None:
+        """
+        Обход AST: для каждого определения функции/метода/конструктора считаем
+        цикломатическую сложность по McCabe = 1 + число узлов-ветвлений в теле.
+        Результат — mapping имя → сложность.
+
+        При коллизии имён (как и везде в графе) остаётся последнее значение —
+        это согласуется с поведением остальных частей Call Graph. Полное
+        разделение перегрузок решается Class.method-квалификацией (отдельная
+        задача из бэклога).
+        """
+        stack = [root]
+        while stack:
+            node = stack.pop()
+            name = self._get_func_def_name(node)
+            if name is not None:
+                result[name] = self._compute_complexity(node)
+            for child in node.children:
+                stack.append(child)
+
+    def _compute_complexity(self, func_node) -> int:
+        """Посчитать цикломатическую сложность одного узла-функции."""
+        count = 1
+        stack = [func_node]
+        while stack:
+            node = stack.pop()
+            if node.type in self._BRANCH_NODE_TYPES:
+                count += 1
+            for child in node.children:
+                stack.append(child)
+        return count
 
     def _walk_calls(
         self, node, current_func: str | None,

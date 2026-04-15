@@ -2,7 +2,7 @@
   "name": "ide-navigator",
   "displayName": "IDE Navigator",
   "description": "Multi-language static-analysis navigation: Outline, Go to Definition, References, Hover, Workspace Symbols, Call Graph. Zero setup — bundled LSP server.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "hvn",
   "license": "MIT",
   "repository": {
