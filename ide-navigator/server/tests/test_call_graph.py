@@ -22,12 +22,12 @@ def test_python_call_graph_basic():
     lang = PythonLanguage()
     graph = lang.get_call_graph(src)
 
-    names = {n["label"] for n in graph["nodes"]}
-    assert "leaf" in names
-    assert "mid" in names
-    assert "top" in names
+    labels = {n["label"] for n in graph["nodes"]}
+    assert "leaf" in labels
+    assert "mid" in labels
+    assert "top" in labels
 
-    # Рёбра вызовов: kind="call"
+    # Рёбра вызовов: kind="call" (id = FQN, для top-level функций совпадает с именем)
     call_pairs = {(e["from"], e["to"]) for e in graph["edges"] if e["kind"] == "call"}
     assert ("mid", "leaf") in call_pairs
     assert ("top", "mid") in call_pairs
@@ -45,19 +45,19 @@ def test_python_call_graph_class_containment():
     lang = PythonLanguage()
     graph = lang.get_call_graph(src)
 
-    names = {n["label"] for n in graph["nodes"]}
-    assert "Service" in names
-    assert "start" in names
-    assert "init" in names
+    labels = {n["label"] for n in graph["nodes"]}
+    assert "Service" in labels
+    assert "start" in labels
+    assert "init" in labels
 
-    # Класс → методы помечены kind="contains"
+    # Класс → методы помечены kind="contains" (FQN в edges)
     contain_pairs = {(e["from"], e["to"]) for e in graph["edges"] if e["kind"] == "contains"}
-    assert ("Service", "start") in contain_pairs
-    assert ("Service", "init") in contain_pairs
+    assert ("Service", "Service.start") in contain_pairs
+    assert ("Service", "Service.init") in contain_pairs
 
-    # start() → init() — это вызов, не containment
+    # start() → init() — это вызов, не containment (FQN)
     call_pairs = {(e["from"], e["to"]) for e in graph["edges"] if e["kind"] == "call"}
-    assert ("start", "init") in call_pairs
+    assert ("Service.start", "Service.init") in call_pairs
 
 
 def test_python_call_graph_node_locations():
@@ -115,8 +115,8 @@ def test_python_call_graph_decorated_methods():
     contain_pairs = {
         (e["from"], e["to"]) for e in graph["edges"] if e["kind"] == "contains"
     }
-    assert ("StateMachine", "current_state") in contain_pairs
-    assert ("StateMachine", "factory") in contain_pairs
+    assert ("StateMachine", "StateMachine.current_state") in contain_pairs
+    assert ("StateMachine", "StateMachine.factory") in contain_pairs
 
 
 def test_python_call_graph_cyclomatic_complexity():
@@ -182,11 +182,12 @@ def test_java_call_graph_cyclomatic_complexity():
         "}\n"
     )
     graph = JavaLanguage().get_call_graph(src)
-    by_name = {n["label"]: n for n in graph["nodes"]}
+    # FQN: App.simple, App.complex — ищем по id
+    by_id = {n["id"]: n for n in graph["nodes"]}
 
-    assert by_name["simple"]["complexity"] == 1
+    assert by_id["App.simple"]["complexity"] == 1
     # if + for + 3 cases (0, 1, default)
-    assert by_name["complex"]["complexity"] == 6
+    assert by_id["App.complex"]["complexity"] == 6
 
 
 def test_python_call_graph_edge_kinds():
@@ -249,10 +250,11 @@ def test_java_call_graph():
     lang = JavaLanguage()
     graph = lang.get_call_graph(src)
 
-    names = {n["label"] for n in graph["nodes"]}
-    assert "App" in names
-    assert "compute" in names
-    assert "run" in names
+    labels = {n["label"] for n in graph["nodes"]}
+    assert "App" in labels
+    assert "compute" in labels
+    assert "run" in labels
 
+    # FQN edges
     edge_pairs = {(e["from"], e["to"]) for e in graph["edges"]}
-    assert ("run", "compute") in edge_pairs
+    assert ("App.run", "App.compute") in edge_pairs

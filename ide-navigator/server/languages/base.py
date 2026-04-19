@@ -6,9 +6,12 @@
 Смотри python_lang.py как пример.
 """
 import logging
+import os
 import time
 from abc import ABC, abstractmethod
 from collections import OrderedDict
+from pathlib import Path
+from urllib.parse import urlparse, unquote
 from tree_sitter import Parser
 from lsprotocol import types
 
@@ -32,37 +35,62 @@ class BaseLanguage(ABC):
         # Кэш привязан к экземпляру класса (в LANGUAGE_MAP они — синглтоны).
         self._parse_cache: OrderedDict[str, object] = OrderedDict()
 
+        # Per-URI кэш последнего дерева для incremental parsing.
+        # При cache miss передаём old_tree в parser.parse() — tree-sitter
+        # переиспользует неизменившиеся узлы и парсит быстрее.
+        self._uri_tree_cache: OrderedDict[str, object] = OrderedDict()
+
     @abstractmethod
     def get_parser(self) -> Parser:
         """Вернуть настроенный парсер tree-sitter для этого языка."""
         pass
 
-    def _parse(self, source: str):
+    def _parse(self, source: str, uri: str | None = None):
         """
         Разобрать исходник через tree-sitter с LRU-кэшем.
         Все методы класса (get_symbols, find_definition и т.д.) должны
         использовать этот метод вместо `self.get_parser().parse(...)`.
+
+        uri — опциональный URI файла. Если указан, используется для
+        incremental parsing: при cache miss берём old_tree из предыдущей
+        версии этого файла и передаём в parser.parse() как hint.
         """
         cached = self._parse_cache.get(source)
         if cached is not None:
             self._parse_cache.move_to_end(source)
             return cached
 
+        # Incremental parsing: ищем old_tree для этого URI
+        old_tree = self._uri_tree_cache.get(uri) if uri else None
+
         start = time.perf_counter()
-        tree = self.get_parser().parse(bytes(source, "utf-8"))
+        source_bytes = bytes(source, "utf-8")
+        if old_tree is not None:
+            tree = self.get_parser().parse(source_bytes, old_tree=old_tree)
+        else:
+            tree = self.get_parser().parse(source_bytes)
         elapsed_ms = (time.perf_counter() - start) * 1000
-        # INFO, а не DEBUG: cache miss — редкое событие (один раз на версию файла),
-        # а наглядное доказательство что кэш работает важно для курсовой.
-        logger.info(f"parse[{self.LANGUAGE_ID}]: {len(source)} bytes in {elapsed_ms:.1f}ms")
+
+        mode = "incremental" if old_tree else "full"
+        logger.info(
+            f"parse[{self.LANGUAGE_ID}]: {len(source)} bytes in {elapsed_ms:.1f}ms ({mode})"
+        )
 
         self._parse_cache[source] = tree
         if len(self._parse_cache) > self._PARSE_CACHE_MAX:
             self._parse_cache.popitem(last=False)
+
+        # Обновить per-URI кэш
+        if uri:
+            self._uri_tree_cache[uri] = tree
+            if len(self._uri_tree_cache) > self._PARSE_CACHE_MAX:
+                self._uri_tree_cache.popitem(last=False)
+
         return tree
 
-    def get_symbols(self, source: str) -> list[types.DocumentSymbol]:
+    def get_symbols(self, source: str, uri: str | None = None) -> list[types.DocumentSymbol]:
         """Главный метод — извлечь все символы из исходного кода."""
-        tree = self._parse(source)
+        tree = self._parse(source, uri)
         return self._extract_symbols(tree.root_node)
 
     @abstractmethod
@@ -87,9 +115,9 @@ class BaseLanguage(ABC):
 
     # ── Go to Definition ────────────────────────────────────────────────
 
-    def find_definition(self, source: str, line: int, character: int) -> types.Range | None:
+    def find_definition(self, source: str, line: int, character: int, uri: str | None = None) -> types.Range | None:
         """Найти определение символа под курсором (внутри одного файла)."""
-        tree = self._parse(source)
+        tree = self._parse(source, uri)
 
         # Находим самый глубокий узел в позиции курсора
         node = tree.root_node.descendant_for_point_range(
@@ -107,6 +135,70 @@ class BaseLanguage(ABC):
             return found.selection_range
         return None
 
+    def find_cross_file_definition(
+        self, source: str, line: int, character: int, uri: str,
+        language_map: dict,
+    ) -> types.Location | None:
+        """Найти определение символа в другом файле через import-tracking.
+
+        Реализация:
+        1. Находим идентификатор под курсором.
+        2. Ищем import-statement, из которого он импортирован.
+        3. Резолвим путь целевого файла.
+        4. Парсим целевой файл и ищем определение символа.
+        """
+        tree = self._parse(source, uri)
+        node = tree.root_node.descendant_for_point_range(
+            (line, character), (line, character)
+        )
+        if node is None or "identifier" not in node.type:
+            return None
+
+        name = node.text.decode("utf-8")
+
+        # Ищем импорт-отображение: {imported_name: (module_path, original_name)}
+        imports = self._extract_imports(tree.root_node, uri)
+        if name not in imports:
+            return None
+
+        target_path, original_name = imports[name]
+        if target_path is None or not target_path.exists():
+            return None
+
+        ext = target_path.suffix.lower()
+        target_lang = language_map.get(ext)
+        if target_lang is None:
+            return None
+
+        try:
+            target_source = target_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return None
+
+        target_uri = target_path.as_uri()
+        symbols = target_lang.get_symbols(target_source, target_uri)
+        found = self._find_symbol_by_name(symbols, original_name)
+        if found:
+            return types.Location(uri=target_uri, range=found.selection_range)
+        return None
+
+    def _extract_imports(self, root_node, uri: str) -> dict[str, tuple[Path | None, str]]:
+        """Извлечь импорты из AST. Возвращает {local_name: (resolved_path, original_name)}.
+
+        По умолчанию — пустой словарь. Языковые модули переопределяют для
+        Python, JS/TS и т.д.
+        """
+        return {}
+
+    @staticmethod
+    def _uri_to_path(uri: str) -> Path:
+        """Конвертировать file:// URI в Path."""
+        parsed = urlparse(uri).path
+        path = unquote(parsed)
+        if os.name == "nt" and path.startswith("/"):
+            path = path[1:]
+        return Path(path)
+
     def _find_symbol_by_name(
         self, symbols: list[types.DocumentSymbol], name: str,
     ) -> types.DocumentSymbol | None:
@@ -120,13 +212,28 @@ class BaseLanguage(ABC):
                     return found
         return None
 
+    def _find_symbol_fqn(
+        self, symbols: list[types.DocumentSymbol], name: str, prefix: str = "",
+    ) -> str | None:
+        """Найти FQN символа по короткому имени (для complexity lookup)."""
+        for s in symbols:
+            fqn = f"{prefix}.{s.name}" if prefix else s.name
+            if s.name == name:
+                return fqn
+            if s.children:
+                found = self._find_symbol_fqn(s.children, name, fqn)
+                if found:
+                    return found
+        return None
+
     # ── Find All References ───────────────────────────────────────────────
 
     def find_references(
         self, source: str, line: int, character: int, include_declaration: bool = True,
+        uri: str | None = None,
     ) -> list[types.Range]:
         """Найти все вхождения идентификатора под курсором в файле."""
-        tree = self._parse(source)
+        tree = self._parse(source, uri)
 
         node = tree.root_node.descendant_for_point_range(
             (line, character), (line, character)
@@ -175,9 +282,9 @@ class BaseLanguage(ABC):
         types.SymbolKind.TypeParameter: "type alias",
     }
 
-    def get_hover(self, source: str, line: int, character: int) -> types.Hover | None:
+    def get_hover(self, source: str, line: int, character: int, uri: str | None = None) -> types.Hover | None:
         """Информация о символе при наведении курсора."""
-        tree = self._parse(source)
+        tree = self._parse(source, uri)
 
         node = tree.root_node.descendant_for_point_range(
             (line, character), (line, character)
@@ -199,16 +306,27 @@ class BaseLanguage(ABC):
         lines = source.splitlines()
         signature = lines[decl_line].strip() if decl_line < len(lines) else name
 
+        # Цикломатическая сложность (для функций/методов/конструкторов)
+        complexity_str = ""
+        if found.kind in (types.SymbolKind.Function, types.SymbolKind.Method,
+                          types.SymbolKind.Constructor):
+            complexity_map: dict[str, int] = {}
+            self._collect_complexity(tree.root_node, complexity_map)
+            fqn = self._find_symbol_fqn(symbols, name) or name
+            cc = complexity_map.get(fqn)
+            if cc is not None:
+                complexity_str = f" · complexity {cc}"
+
         # Markdown hover:
         #   1. Код-блок с подсветкой синтаксиса (через LANGUAGE_ID наследника)
         #   2. Горизонтальный разделитель
-        #   3. Kind (жирным) — line N (em-dash как разделитель)
+        #   3. Kind (жирным) — line N — complexity (em-dash как разделитель)
         md = (
             f"```{self.LANGUAGE_ID}\n"
             f"{signature}\n"
             f"```\n"
             f"---\n"
-            f"**{kind_label}** — line {decl_line + 1}"
+            f"**{kind_label}** — line {decl_line + 1}{complexity_str}"
         )
 
         return types.Hover(
@@ -223,13 +341,14 @@ class BaseLanguage(ABC):
 
     def get_references_with_context(
         self, source: str, line: int, character: int, include_declaration: bool = True,
+        uri: str | None = None,
     ) -> dict | None:
         """
         Найти все референсы символа под курсором + извлечь строку-сниппет из
         исходника для каждого вхождения. Используется кастомной командой
         ide-navigator.references → Obsidian-style WebView-панель.
         """
-        tree = self._parse(source)
+        tree = self._parse(source, uri)
 
         node = tree.root_node.descendant_for_point_range(
             (line, character), (line, character)
@@ -315,11 +434,12 @@ class BaseLanguage(ABC):
         "select_statement", "guard_statement",
     })
 
-    def get_call_graph(self, source: str) -> dict:
+    def get_call_graph(self, source: str, uri: str | None = None) -> dict:
         """Построить граф вызовов: какие функции вызывают какие.
 
         Возвращает:
           nodes: [{id, label, type, line, character, endLine, endCharacter, complexity}]
+            — id = FQN (Class.method), label = short name для отображения.
             — координаты указывают на идентификатор (selection_range),
               чтобы клик в webview открывал файл ровно на имени символа.
             — complexity: cyclomatic complexity по McCabe (1 + число ветвлений).
@@ -327,28 +447,35 @@ class BaseLanguage(ABC):
             — kind="call" (вызов функции/метода) или "contains"
               (класс → его метод/конструктор).
         """
-        tree = self._parse(source)
+        tree = self._parse(source, uri)
         root = tree.root_node
 
         # Собираем все символы (включая классы) с их типами и позициями
         symbols = self._extract_symbols(root)
-        # name → {"type": str, "range": lsp Range (selection_range)}
+
+        # FQN → {"type": str, "range": lsp Range, "label": short_name}
         symbol_info: dict[str, dict] = {}
         self._collect_symbol_info(symbols, symbol_info)
 
-        # Имена функций/методов для отслеживания вызовов
+        # FQN функций/методов для отслеживания вызовов
         known_funcs: set[str] = set()
         self._collect_callable_names(symbols, known_funcs)
 
-        # Связи класс → его методы
+        # short_name → list of FQNs (для резолва вызовов)
+        short_to_fqn: dict[str, list[str]] = {}
+        for fqn in known_funcs:
+            short = fqn.rsplit(".", 1)[-1]
+            short_to_fqn.setdefault(short, []).append(fqn)
+
+        # Связи класс → его методы (теперь с FQN)
         contain_edges: set[tuple[str, str]] = set()
         self._collect_class_edges(symbols, contain_edges)
 
-        # Обходим AST, отслеживая текущую функцию, собираем рёбра вызовов
+        # Обходим AST, отслеживая текущую функцию (FQN), собираем рёбра вызовов
         call_edges: set[tuple[str, str]] = set()
-        self._walk_calls(root, None, known_funcs, call_edges)
+        self._walk_calls(root, None, known_funcs, call_edges, short_to_fqn)
 
-        # Цикломатическая сложность по имени функции (один проход по AST)
+        # Цикломатическая сложность по FQN
         complexity_map: dict[str, int] = {}
         self._collect_complexity(root, complexity_map)
 
@@ -369,7 +496,7 @@ class BaseLanguage(ABC):
             info = symbol_info.get(n, {})
             node = {
                 "id": safe_label(n),
-                "label": safe_label(n),
+                "label": safe_label(info.get("label", n)),
                 "type": safe_type(info.get("type", "function")),
             }
             rng = info.get("range")
@@ -396,65 +523,77 @@ class BaseLanguage(ABC):
 
     def _collect_class_edges(
         self, symbols: list[types.DocumentSymbol], edges: set[tuple[str, str]],
+        prefix: str = "",
     ) -> None:
-        """Добавить рёбра класс → его методы/конструкторы."""
+        """Добавить рёбра класс → его методы/конструкторы (FQN)."""
         for s in symbols:
+            fqn = f"{prefix}.{s.name}" if prefix else s.name
             if s.kind in (types.SymbolKind.Class, types.SymbolKind.Interface,
                           types.SymbolKind.Struct) and s.children:
                 for child in s.children:
+                    child_fqn = f"{fqn}.{child.name}"
                     if child.kind in (types.SymbolKind.Function, types.SymbolKind.Method,
                                       types.SymbolKind.Constructor):
-                        edges.add((s.name, child.name))
+                        edges.add((fqn, child_fqn))
+            if s.children:
+                self._collect_class_edges(s.children, edges, fqn)
 
     def _collect_symbol_info(
         self, symbols: list[types.DocumentSymbol], result: dict[str, dict],
+        prefix: str = "",
     ) -> None:
-        """Собрать все символы с типами и позициями идентификатора (selection_range).
-
-        Если одно имя встречается несколько раз (перегрузка/коллизия), остаётся
-        первая встреченная позиция — клик-навигация прыгнет к ней. Полноценная
-        дизамбигуация имён вида Class.method — отдельная задача из бэклога.
-        """
+        """Собрать все символы с FQN-ключами, типами и позициями."""
         for s in symbols:
+            fqn = f"{prefix}.{s.name}" if prefix else s.name
             kind_str = self._GRAPH_KIND_MAP.get(s.kind)
-            if kind_str and s.name not in result:
-                result[s.name] = {
+            if kind_str and fqn not in result:
+                result[fqn] = {
                     "type": kind_str,
                     "range": s.selection_range,
+                    "label": s.name,
                 }
             if s.children:
-                self._collect_symbol_info(s.children, result)
+                self._collect_symbol_info(s.children, result, fqn)
 
     def _collect_callable_names(
         self, symbols: list[types.DocumentSymbol], result: set[str],
+        prefix: str = "",
     ) -> None:
-        """Собрать имена функций и методов из дерева символов."""
+        """Собрать FQN функций и методов из дерева символов."""
         for s in symbols:
+            fqn = f"{prefix}.{s.name}" if prefix else s.name
             if s.kind in (types.SymbolKind.Function, types.SymbolKind.Method,
                           types.SymbolKind.Constructor):
-                result.add(s.name)
+                result.add(fqn)
             if s.children:
-                self._collect_callable_names(s.children, result)
+                self._collect_callable_names(s.children, result, fqn)
 
-    def _collect_complexity(self, root, result: dict[str, int]) -> None:
+    def _collect_complexity(self, root, result: dict[str, int],
+                            scope: str = "") -> None:
         """
         Обход AST: для каждого определения функции/метода/конструктора считаем
         цикломатическую сложность по McCabe = 1 + число узлов-ветвлений в теле.
-        Результат — mapping имя → сложность.
-
-        При коллизии имён (как и везде в графе) остаётся последнее значение —
-        это согласуется с поведением остальных частей Call Graph. Полное
-        разделение перегрузок решается Class.method-квалификацией (отдельная
-        задача из бэклога).
+        Результат — mapping FQN → сложность.
         """
-        stack = [root]
+        stack: list[tuple] = [(root, scope)]
         while stack:
-            node = stack.pop()
+            node, cur_scope = stack.pop()
             name = self._get_func_def_name(node)
             if name is not None:
-                result[name] = self._compute_complexity(node)
-            for child in node.children:
-                stack.append(child)
+                fqn = f"{cur_scope}.{name}" if cur_scope else name
+                result[fqn] = self._compute_complexity(node)
+                # Дети наследуют scope
+                for child in node.children:
+                    stack.append((child, fqn))
+            else:
+                # Классы тоже формируют scope
+                cls_name = self._get_class_def_name(node)
+                if cls_name:
+                    child_scope = f"{cur_scope}.{cls_name}" if cur_scope else cls_name
+                else:
+                    child_scope = cur_scope
+                for child in node.children:
+                    stack.append((child, child_scope))
 
     def _compute_complexity(self, func_node) -> int:
         """Посчитать цикломатическую сложность одного узла-функции."""
@@ -471,19 +610,45 @@ class BaseLanguage(ABC):
     def _walk_calls(
         self, node, current_func: str | None,
         known: set[str], edges: set[tuple[str, str]],
+        short_to_fqn: dict[str, list[str]] | None = None,
+        scope: str = "",
     ) -> None:
-        """Рекурсивный обход AST: отслеживать текущую функцию, собирать вызовы."""
+        """Рекурсивный обход AST: отслеживать текущую функцию (FQN), собирать вызовы."""
         func_name = self._get_func_def_name(node)
+        cls_name = self._get_class_def_name(node) if func_name is None else None
+
         if func_name is not None:
-            current_func = func_name
+            current_func = f"{scope}.{func_name}" if scope else func_name
+            scope = current_func
+        elif cls_name is not None:
+            scope = f"{scope}.{cls_name}" if scope else cls_name
 
         if current_func is not None:
             callee = self._get_call_name(node)
-            if callee and callee in known:
-                edges.add((current_func, callee))
+            if callee:
+                # Пробуем найти FQN callee
+                resolved = False
+                if short_to_fqn and callee in short_to_fqn:
+                    for fqn in short_to_fqn[callee]:
+                        edges.add((current_func, fqn))
+                        resolved = True
+                if not resolved and callee in known:
+                    edges.add((current_func, callee))
 
         for child in node.children:
-            self._walk_calls(child, current_func, known, edges)
+            self._walk_calls(child, current_func, known, edges, short_to_fqn, scope)
+
+    def _get_class_def_name(self, node) -> str | None:
+        """Если узел — определение класса/интерфейса/структуры, вернуть имя."""
+        if node.type in (
+            "class_definition", "class_declaration",
+            "interface_declaration", "struct_specifier",
+            "type_spec",  # Go struct
+        ):
+            name_node = node.child_by_field_name("name")
+            if name_node:
+                return name_node.text.decode("utf-8")
+        return None
 
     def _get_func_def_name(self, node) -> str | None:
         """Если узел — определение функции/метода, вернуть имя. Иначе None."""

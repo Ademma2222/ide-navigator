@@ -1,3 +1,4 @@
+from pathlib import Path
 from tree_sitter import Language, Parser
 import tree_sitter_javascript as tsjs
 from lsprotocol import types
@@ -8,8 +9,108 @@ class JavaScriptLanguage(BaseLanguage):
 
     LANGUAGE_ID = "javascript"
 
+    # Расширения для резолва JS/TS модулей (в порядке приоритета)
+    _JS_EXTENSIONS = [".js", ".ts", ".tsx", ".jsx"]
+
     def get_parser(self) -> Parser:
         return Parser(Language(tsjs.language()))
+
+    def _extract_imports(self, root_node, uri: str) -> dict[str, tuple[Path | None, str]]:
+        """Извлечь JS/TS-импорты и резолвить в пути файлов.
+
+        Поддерживает:
+          import { bar } from './foo'
+          import bar from './foo'
+          import * as bar from './foo'
+          const bar = require('./foo')
+        """
+        current_path = self._uri_to_path(uri)
+        current_dir = current_path.parent
+        result: dict[str, tuple[Path | None, str]] = {}
+
+        for child in root_node.children:
+            if child.type == "import_statement":
+                source_node = child.child_by_field_name("source")
+                if not source_node:
+                    continue
+                module_path = source_node.text.decode("utf-8").strip("'\"")
+                resolved = self._resolve_js_module(current_dir, module_path)
+
+                # Собираем импортируемые имена
+                for c in child.children:
+                    if c.type == "import_clause":
+                        for ic in c.children:
+                            if ic.type == "identifier":
+                                # default import: import Foo from './foo'
+                                name = ic.text.decode("utf-8")
+                                result[name] = (resolved, name)
+                            elif ic.type == "named_imports":
+                                for spec in ic.children:
+                                    if spec.type == "import_specifier":
+                                        name_node = spec.child_by_field_name("name")
+                                        alias_node = spec.child_by_field_name("alias")
+                                        if name_node:
+                                            orig = name_node.text.decode("utf-8")
+                                            local = alias_node.text.decode("utf-8") if alias_node else orig
+                                            result[local] = (resolved, orig)
+                            elif ic.type == "namespace_import":
+                                # import * as name from '...'
+                                for ns in ic.children:
+                                    if ns.type == "identifier":
+                                        name = ns.text.decode("utf-8")
+                                        result[name] = (resolved, name)
+
+            # const foo = require('./bar')
+            elif child.type in ("lexical_declaration", "variable_declaration"):
+                for decl in child.children:
+                    if decl.type != "variable_declarator":
+                        continue
+                    name_node = decl.child_by_field_name("name")
+                    value_node = decl.child_by_field_name("value")
+                    if not name_node or not value_node:
+                        continue
+                    if value_node.type == "call_expression":
+                        func = value_node.child_by_field_name("function")
+                        if func and func.text == b"require":
+                            args = value_node.child_by_field_name("arguments")
+                            if args and args.child_count > 1:
+                                arg = args.children[1]  # skip '('
+                                if arg.type == "string":
+                                    mod = arg.text.decode("utf-8").strip("'\"")
+                                    resolved = self._resolve_js_module(current_dir, mod)
+                                    name = name_node.text.decode("utf-8")
+                                    result[name] = (resolved, name)
+
+        return result
+
+    def _resolve_js_module(self, base_dir: Path, module_path: str) -> Path | None:
+        """Резолвить JS/TS module specifier в файл.
+
+        Только относительные пути (./foo, ../bar). npm-модули не резолвим.
+        """
+        if not module_path.startswith("."):
+            return None
+
+        target = base_dir / module_path
+
+        # Точное совпадение (если расширение уже указано)
+        if target.is_file():
+            return target
+
+        # Пробуем расширения
+        for ext in self._JS_EXTENSIONS:
+            candidate = target.with_suffix(ext)
+            if candidate.is_file():
+                return candidate
+
+        # index.js / index.ts внутри директории
+        if target.is_dir():
+            for ext in self._JS_EXTENSIONS:
+                idx = target / f"index{ext}"
+                if idx.is_file():
+                    return idx
+
+        return None
 
     def _extract_symbols(self, node, inside_class: bool = False) -> list[types.DocumentSymbol]:
         symbols = []

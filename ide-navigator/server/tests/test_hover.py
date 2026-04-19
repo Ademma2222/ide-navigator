@@ -81,3 +81,44 @@ def test_typescript_hover_language_id():
     hover = lang.get_hover(src, 2, 11)  # на compute()
     assert hover is not None
     assert "```typescript" in hover.contents.value
+
+
+def test_python_hover_complexity_toplevel():
+    """Complexity отображается для top-level функций."""
+    src = (
+        "def branching(x):\n"
+        "    if x > 0:\n"
+        "        return 1\n"
+        "    elif x < 0:\n"
+        "        return -1\n"
+        "    return 0\n"
+        "\n"
+        "branching(1)\n"
+    )
+    lang = PythonLanguage()
+    hover = lang.get_hover(src, 7, 2)  # на вызове branching
+    assert hover is not None
+    md = hover.contents.value
+    assert "complexity 3" in md
+
+
+def test_python_hover_complexity_method():
+    """Complexity отображается для методов класса (FQN lookup)."""
+    src = (
+        "class Service:\n"
+        "    def process(self, items):\n"
+        "        for item in items:\n"
+        "            if item > 0:\n"
+        "                pass\n"
+        "        return True\n"
+        "\n"
+        "s = Service()\n"
+        "s.process([])\n"
+    )
+    lang = PythonLanguage()
+    # Наведение на "process" в определении (строка 1)
+    hover = lang.get_hover(src, 1, 10)
+    assert hover is not None
+    md = hover.contents.value
+    # for + if = 2 branch points → complexity 3
+    assert "complexity 3" in md

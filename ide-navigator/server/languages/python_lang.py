@@ -1,3 +1,4 @@
+from pathlib import Path
 from tree_sitter import Language, Parser
 import tree_sitter_python as tspython
 from lsprotocol import types
@@ -10,6 +11,102 @@ class PythonLanguage(BaseLanguage):
 
     def get_parser(self) -> Parser:
         return Parser(Language(tspython.language()))
+
+    def _extract_imports(self, root_node, uri: str) -> dict[str, tuple[Path | None, str]]:
+        """Извлечь Python-импорты и резолвить в пути файлов.
+
+        Поддерживает:
+          import foo              → foo → foo.py (рядом с текущим файлом)
+          from foo import bar     → bar → foo.py, символ bar
+          from .foo import bar    → bar → ./foo.py (relative), символ bar
+          from . import foo       → foo → ./__init__.py или ./foo.py
+        """
+        current_path = self._uri_to_path(uri)
+        current_dir = current_path.parent
+        result: dict[str, tuple[Path | None, str]] = {}
+
+        for child in root_node.children:
+            if child.type == "import_statement":
+                # import foo / import foo as bar
+                for name_node in child.children:
+                    if name_node.type == "dotted_name":
+                        module_name = name_node.text.decode("utf-8")
+                        parts = module_name.split(".")
+                        resolved = self._resolve_python_module(current_dir, parts)
+                        local_name = parts[-1]
+                        result[local_name] = (resolved, local_name)
+                    elif name_node.type == "aliased_import":
+                        name_child = name_node.child_by_field_name("name")
+                        alias_child = name_node.child_by_field_name("alias")
+                        if name_child and alias_child:
+                            module_name = name_child.text.decode("utf-8")
+                            parts = module_name.split(".")
+                            resolved = self._resolve_python_module(current_dir, parts)
+                            local = alias_child.text.decode("utf-8")
+                            result[local] = (resolved, parts[-1])
+
+            elif child.type == "import_from_statement":
+                # from foo import bar / from .foo import bar
+                module_node = child.child_by_field_name("module_name")
+                module_text = module_node.text.decode("utf-8") if module_node else ""
+
+                # Считаем количество leading dots для relative imports
+                dots = 0
+                for c in child.children:
+                    if c.type == "." or (c.type == "import_prefix" and c.text):
+                        text = c.text.decode("utf-8") if isinstance(c.text, bytes) else c.text
+                        dots += text.count(".")
+
+                if dots > 0:
+                    # Relative import
+                    base = current_dir
+                    for _ in range(dots - 1):
+                        base = base.parent
+                    if module_text:
+                        parts = module_text.split(".")
+                        resolved = self._resolve_python_module(base, parts)
+                    else:
+                        resolved = self._resolve_python_module(base, [])
+                else:
+                    parts = module_text.split(".") if module_text else []
+                    resolved = self._resolve_python_module(current_dir, parts)
+
+                # Собираем импортируемые имена
+                for c in child.children:
+                    if c.type == "dotted_name" and c != module_node:
+                        name = c.text.decode("utf-8")
+                        result[name] = (resolved, name)
+                    elif c.type == "aliased_import":
+                        name_child = c.child_by_field_name("name")
+                        alias_child = c.child_by_field_name("alias")
+                        if name_child:
+                            orig = name_child.text.decode("utf-8")
+                            local = alias_child.text.decode("utf-8") if alias_child else orig
+                            result[local] = (resolved, orig)
+
+        return result
+
+    @staticmethod
+    def _resolve_python_module(base_dir: Path, parts: list[str]) -> Path | None:
+        """Резолвить Python module path в файл.
+
+        Пробуем: base/part1/part2.py, base/part1/part2/__init__.py
+        """
+        if not parts:
+            init = base_dir / "__init__.py"
+            return init if init.exists() else None
+
+        # base/a/b/c.py
+        file_path = base_dir / "/".join(parts[:-1]) / (parts[-1] + ".py") if len(parts) > 1 else base_dir / (parts[0] + ".py")
+        if file_path.exists():
+            return file_path
+
+        # base/a/b/c/__init__.py
+        pkg_path = base_dir / "/".join(parts) / "__init__.py"
+        if pkg_path.exists():
+            return pkg_path
+
+        return None
 
     def _extract_symbols(self, node, inside_class: bool = False) -> list[types.DocumentSymbol]:
         symbols = []

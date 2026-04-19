@@ -223,6 +223,23 @@ export function activate(context: vscode.ExtensionContext) {
                 undefined,
                 context.subscriptions,
             );
+
+            // Live-refresh: при изменении исходного файла перезапрашиваем граф
+            let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+            const changeListener = vscode.workspace.onDidChangeTextDocument((e) => {
+                if (e.document.uri.toString() !== uri) return;
+                if (refreshTimer) clearTimeout(refreshTimer);
+                refreshTimer = setTimeout(async () => {
+                    try {
+                        const fresh: GraphData = await client.sendRequest('workspace/executeCommand', {
+                            command: 'ide-navigator.callGraph',
+                            arguments: [uri]
+                        });
+                        panel.webview.postMessage({ command: 'refresh', data: fresh });
+                    } catch (_) { /* ignore refresh errors */ }
+                }, 500);
+            });
+            panel.onDidDispose(() => changeListener.dispose());
         }
     );
 
@@ -343,50 +360,56 @@ function getCallGraphHtml(
 
         /* Тулбар */
         #toolbar {
-            position: fixed; top: 10px; left: 14px;
+            position: fixed; top: 10px; left: 14px; right: 14px;
             background: rgba(30,30,30,0.9); border: 1px solid #333;
-            border-radius: 8px; padding: 8px 12px;
-            display: flex; align-items: center; gap: 14px;
+            border-radius: 8px; padding: 6px 10px;
+            display: flex; align-items: center; gap: 6px;
+            flex-wrap: wrap;
             backdrop-filter: blur(8px); z-index: 10;
-            font-size: 12px;
+            font-size: 11px;
+        }
+        #toolbar .group {
+            display: flex; align-items: center; gap: 6px;
+            white-space: nowrap;
         }
         #toolbar input[type="text"] {
             background: #262626; color: #ddd;
             border: 1px solid #3a3a3a; border-radius: 4px;
-            padding: 4px 8px; font-size: 12px;
-            width: 180px;
+            padding: 3px 6px; font-size: 11px;
+            width: 130px;
             font-family: inherit;
             outline: none;
         }
         #toolbar input[type="text"]:focus { border-color: #7f6df2; }
-        #toolbar input[type="checkbox"] { accent-color: #7f6df2; }
+        #toolbar input[type="checkbox"] { accent-color: #7f6df2; margin: 0; }
         #toolbar label {
-            display: flex; align-items: center; gap: 5px;
+            display: flex; align-items: center; gap: 3px;
             color: #bbb; cursor: pointer; user-select: none;
         }
         #toolbar select {
             background: #262626; color: #ddd;
             border: 1px solid #3a3a3a; border-radius: 4px;
-            padding: 3px 6px; font-size: 12px;
+            padding: 2px 4px; font-size: 11px;
             font-family: inherit;
             outline: none;
         }
         #toolbar button {
             background: #262626; color: #ddd;
             border: 1px solid #3a3a3a; border-radius: 4px;
-            padding: 3px 8px; font-size: 12px;
+            padding: 2px 6px; font-size: 11px;
             font-family: inherit;
             cursor: pointer;
             outline: none;
-            min-width: 24px;
+            min-width: 22px;
         }
         #toolbar button:hover:not(:disabled) { border-color: #7f6df2; color: #fff; }
         #toolbar button:disabled { opacity: 0.35; cursor: default; }
         #toolbar .divider {
             width: 1px; background: #333; align-self: stretch;
+            min-height: 16px;
         }
         #toolbar .hint {
-            color: #666; font-size: 11px; font-style: italic;
+            color: #666; font-size: 10px; font-style: italic;
         }
 
         /* Легенда */
@@ -405,7 +428,7 @@ function getCallGraphHtml(
 
         /* Статистика */
         #stats {
-            position: fixed; top: 14px; right: 14px;
+            position: fixed; bottom: 14px; right: 14px;
             color: #666; font-size: 11px; z-index: 10;
             background: rgba(30,30,30,0.85); border: 1px solid #333;
             border-radius: 6px; padding: 6px 10px;
@@ -419,55 +442,44 @@ function getCallGraphHtml(
 </head>
 <body>
     <div id="toolbar">
-        <button id="historyBack" title="Back (Alt+←)" disabled>←</button>
-        <button id="historyFwd" title="Forward (Alt+→)" disabled>→</button>
+        <span class="group">
+            <button id="historyBack" title="Back (Alt+←)" disabled>←</button>
+            <button id="historyFwd" title="Forward (Alt+→)" disabled>→</button>
+            <div class="divider"></div>
+            <input id="search" type="text" placeholder="Search…" spellcheck="false">
+        </span>
         <div class="divider"></div>
-        <input id="search" type="text" placeholder="Search symbols…" spellcheck="false">
+        <span class="group">
+            <label title="Collapse methods into their container classes">
+                <input type="checkbox" id="groupByClass"> Group
+            </label>
+            <label title="Show gray edges (function/method calls)">
+                <input type="checkbox" id="showCall" checked> Calls
+            </label>
+            <label title="Show red dashed edges (class → its methods)">
+                <input type="checkbox" id="showContains" checked> Contains
+            </label>
+        </span>
         <div class="divider"></div>
-        <label title="Swap direction of call edges (who calls me)">
-            <input type="checkbox" id="reverse"> Reverse
-        </label>
-        <label title="Collapse methods into their container classes">
-            <input type="checkbox" id="groupByClass"> Group by class
-        </label>
-        <div class="divider"></div>
-        <label title="Show gray edges (function/method calls)">
-            <input type="checkbox" id="showCall" checked> Calls
-        </label>
-        <label title="Show red dashed edges (class → its methods)">
-            <input type="checkbox" id="showContains" checked> Contains
-        </label>
-        <div class="divider"></div>
-        <label title="Dim functions with zero incoming calls (potential dead code)">
-            <input type="checkbox" id="highlightUnused"> Unused
-        </label>
-        <label title="Highlight edges that are part of a strongly-connected cycle">
-            <input type="checkbox" id="markCycles"> Cycles
-        </label>
-        <div class="divider"></div>
-        <label title="Show only N-hop neighborhood of the selected node">
-            Depth:
-            <select id="depth">
-                <option value="all">all</option>
-                <option value="1">1</option>
-                <option value="2">2</option>
-                <option value="3">3</option>
-                <option value="4">4</option>
-                <option value="5">5</option>
-            </select>
-        </label>
-        <div class="divider"></div>
-        <label title="Export current view">
-            Export:
-            <select id="exportFmt">
-                <option value="">—</option>
-                <option value="png">PNG</option>
-                <option value="svg">SVG</option>
-                <option value="mermaid">Mermaid</option>
-                <option value="dot">DOT</option>
-            </select>
-        </label>
-        <span id="depth-hint" class="hint"></span>
+        <span class="group">
+            <label title="Dim functions with zero incoming calls (potential dead code)">
+                <input type="checkbox" id="highlightUnused"> Unused
+            </label>
+            <label title="Highlight edges that are part of a strongly-connected cycle">
+                <input type="checkbox" id="markCycles"> Cycles
+            </label>
+            <div class="divider"></div>
+            <label title="Export current view">
+                Export
+                <select id="exportFmt">
+                    <option value="">—</option>
+                    <option value="png">PNG</option>
+                    <option value="svg">SVG</option>
+                    <option value="mermaid">Mermaid</option>
+                    <option value="dot">DOT</option>
+                </select>
+            </label>
+        </span>
     </div>
     <div id="graph"></div>
     <div id="stats"></div>
@@ -475,7 +487,7 @@ function getCallGraphHtml(
     <div id="info">No call relationships found</div>
     <script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
     <script>
-        const raw = ${json};
+        let raw = ${json};
         const vscode = acquireVsCodeApi();
 
         /* ── Цвета по типу символа ── */
@@ -523,13 +535,11 @@ function getCallGraphHtml(
         /* ── Состояние тулбара ── */
         const state = {
             search: '',
-            reverse: false,
             groupByClass: false,
             showCall: true,
             showContains: true,
             highlightUnused: false,
             markCycles: false,
-            depth: 'all',
             selectedNode: null,
         };
 
@@ -670,36 +680,6 @@ function getCallGraphHtml(
                 nodes = nodes.filter(n => !hidden.has(n.id));
             }
 
-            /* 2. Reverse: перевернуть направление call-рёбер (но не contains) */
-            if (state.reverse) {
-                edges = edges.map(e => e.kind === 'call'
-                    ? { from: e.to, to: e.from, kind: 'call' }
-                    : e);
-            }
-
-            /* 3. Depth: BFS из selectedNode, ненаправленно, по соседству */
-            if (state.depth !== 'all' && state.selectedNode &&
-                nodes.some(n => n.id === state.selectedNode)) {
-                const maxDepth = Number(state.depth);
-                const adj = {};
-                edges.forEach(e => {
-                    (adj[e.from] = adj[e.from] || []).push(e.to);
-                    (adj[e.to]   = adj[e.to]   || []).push(e.from);
-                });
-                const visible = new Set();
-                const queue = [[state.selectedNode, 0]];
-                while (queue.length) {
-                    const [id, d] = queue.shift();
-                    if (visible.has(id)) continue;
-                    visible.add(id);
-                    if (d < maxDepth) {
-                        (adj[id] || []).forEach(n => queue.push([n, d + 1]));
-                    }
-                }
-                nodes = nodes.filter(n => visible.has(n.id));
-                edges = edges.filter(e => visible.has(e.from) && visible.has(e.to));
-            }
-
             return { nodes, edges };
         }
 
@@ -803,16 +783,10 @@ function getCallGraphHtml(
             return { nodes: nodeDS, edges: edgeDS, rawCount: { nodes: nodes.length, edges: edges.length } };
         }
 
-        /* ── Обновление stats/hint ── */
+        /* ── Обновление stats ── */
         function updateStats(rawCount) {
             document.getElementById('stats').textContent =
                 rawCount.nodes + ' symbols \\u00b7 ' + rawCount.edges + ' edges';
-            const hint = document.getElementById('depth-hint');
-            if (state.depth !== 'all' && !state.selectedNode) {
-                hint.textContent = '(click a node to focus)';
-            } else {
-                hint.textContent = '';
-            }
         }
 
         if (raw.nodes.length === 0) {
@@ -885,7 +859,6 @@ function getCallGraphHtml(
             network.on('click', (params) => {
                 if (params.nodes.length === 0) {
                     state.selectedNode = null;
-                    if (state.depth !== 'all') rerender();
                     return;
                 }
                 const nodeId = params.nodes[0];
@@ -895,8 +868,6 @@ function getCallGraphHtml(
                 const withMod = src && (src.ctrlKey || src.metaKey || src.shiftKey || src.altKey);
                 if (withMod) {
                     navigateToNode(nodeId);
-                } else if (state.depth !== 'all') {
-                    rerender();
                 }
             });
 
@@ -928,11 +899,6 @@ function getCallGraphHtml(
                 }, 120);
             });
 
-            document.getElementById('reverse').addEventListener('change', (e) => {
-                state.reverse = e.target.checked;
-                rerender();
-            });
-
             document.getElementById('groupByClass').addEventListener('change', (e) => {
                 state.groupByClass = e.target.checked;
                 /* При группировке selectedNode может исчезнуть */
@@ -952,11 +918,6 @@ function getCallGraphHtml(
                 rerender();
             });
 
-            document.getElementById('depth').addEventListener('change', (e) => {
-                state.depth = e.target.value;
-                rerender();
-            });
-
             document.getElementById('highlightUnused').addEventListener('change', (e) => {
                 state.highlightUnused = e.target.checked;
                 rerender();
@@ -972,7 +933,6 @@ function getCallGraphHtml(
                 state.selectedNode = nodeId;
                 network.selectNodes([nodeId], false);
                 try { network.focus(nodeId, { scale: 1.1, animation: { duration: 300, easingFunction: 'easeInOutQuad' } }); } catch (_) {}
-                if (state.depth !== 'all') rerender();
                 updateHistoryButtons();
             }
             document.getElementById('historyBack').addEventListener('click', () => {
@@ -1115,6 +1075,33 @@ function getCallGraphHtml(
                 row.appendChild(dot);
                 row.appendChild(label);
                 legendEl.appendChild(row);
+            });
+
+            /* ── Live-refresh: расширение шлёт новый граф при изменении файла ── */
+            window.addEventListener('message', (event) => {
+                const msg = event.data;
+                if (msg && msg.command === 'refresh' && msg.data) {
+                    raw = msg.data;
+                    /* Обновить индексы */
+                    Object.keys(nodeById).forEach(k => delete nodeById[k]);
+                    raw.nodes.forEach(n => { nodeById[n.id] = n; });
+                    /* Пересчитать degree */
+                    Object.keys(degree).forEach(k => delete degree[k]);
+                    raw.nodes.forEach(n => { degree[n.id] = 0; });
+                    raw.edges.forEach(e => {
+                        degree[e.from] = (degree[e.from] || 0) + 1;
+                        degree[e.to]   = (degree[e.to]   || 0) + 1;
+                    });
+                    /* Обновить classToMethods / methodToClass */
+                    Object.keys(classToMethods).forEach(k => delete classToMethods[k]);
+                    Object.keys(methodToClass).forEach(k => delete methodToClass[k]);
+                    raw.edges.filter(e => e.kind === 'contains').forEach(e => {
+                        if (!classToMethods[e.from]) classToMethods[e.from] = new Set();
+                        classToMethods[e.from].add(e.to);
+                        if (!(e.to in methodToClass)) methodToClass[e.to] = e.from;
+                    });
+                    rerender();
+                }
             });
         }
     </script>

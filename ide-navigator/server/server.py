@@ -130,7 +130,7 @@ def document_symbol(
 
     try:
         doc = ls.workspace.get_text_document(uri)
-        symbols = lang.get_symbols(doc.source)
+        symbols = lang.get_symbols(doc.source, uri)
     except Exception as e:
         logger.exception(f"Outline: failed on {uri}: {e}")
         return []
@@ -153,7 +153,7 @@ def definition(
 
     try:
         doc = ls.workspace.get_text_document(uri)
-        result = lang.find_definition(doc.source, params.position.line, params.position.character)
+        result = lang.find_definition(doc.source, params.position.line, params.position.character, uri)
     except Exception as e:
         logger.exception(f"Definition: failed on {uri}: {e}")
         return None
@@ -161,6 +161,19 @@ def definition(
     if result:
         logger.info(f"Definition: найдено в {uri}:{result.start.line + 1}")
         return types.Location(uri=uri, range=result)
+
+    # Cross-file: ищем определение через import-tracking
+    try:
+        doc = ls.workspace.get_text_document(uri)
+        cross = lang.find_cross_file_definition(
+            doc.source, params.position.line, params.position.character,
+            uri, LANGUAGE_MAP,
+        )
+        if cross:
+            logger.info(f"Definition: cross-file → {cross.uri}:{cross.range.start.line + 1}")
+            return cross
+    except Exception as e:
+        logger.exception(f"Definition: cross-file failed on {uri}: {e}")
 
     logger.info(f"Definition: не найдено для позиции {params.position.line}:{params.position.character}")
     return None
@@ -182,7 +195,7 @@ def references(
         doc = ls.workspace.get_text_document(uri)
         include_decl = params.context.include_declaration
         ranges = lang.find_references(
-            doc.source, params.position.line, params.position.character, include_decl,
+            doc.source, params.position.line, params.position.character, include_decl, uri,
         )
     except Exception as e:
         logger.exception(f"References: failed on {uri}: {e}")
@@ -206,7 +219,7 @@ def hover(
 
     try:
         doc = ls.workspace.get_text_document(uri)
-        result = lang.get_hover(doc.source, params.position.line, params.position.character)
+        result = lang.get_hover(doc.source, params.position.line, params.position.character, uri)
     except Exception as e:
         logger.exception(f"Hover: failed on {uri}: {e}")
         return None
@@ -214,6 +227,65 @@ def hover(
     if result:
         logger.info(f"Hover: {uri}:{params.position.line + 1}")
     return result
+
+
+# ── CodeLens (reference counts) ──────────────────────────────────────────
+
+@server.feature(types.TEXT_DOCUMENT_CODE_LENS)
+def code_lens(
+    ls: LanguageServer,
+    params: types.CodeLensParams,
+) -> list[types.CodeLens]:
+    """CodeLens — показать количество ссылок над каждой функцией/классом."""
+    uri = params.text_document.uri
+    lang = get_language(uri)
+
+    if lang is None:
+        return []
+
+    try:
+        doc = ls.workspace.get_text_document(uri)
+        source = doc.source
+        symbols = lang.get_symbols(source, uri)
+    except Exception as e:
+        logger.exception(f"CodeLens: failed on {uri}: {e}")
+        return []
+
+    lenses: list[types.CodeLens] = []
+    _collect_code_lenses(lang, source, symbols, uri, lenses)
+    logger.info(f"CodeLens: {len(lenses)} lenses in {uri}")
+    return lenses
+
+
+def _collect_code_lenses(
+    lang: BaseLanguage,
+    source: str,
+    symbols: list[types.DocumentSymbol],
+    uri: str,
+    result: list[types.CodeLens],
+) -> None:
+    """Рекурсивно собрать CodeLens для каждого символа."""
+    for s in symbols:
+        # Считаем ссылки на этот символ (без объявления)
+        refs = lang.find_references(
+            source,
+            s.selection_range.start.line,
+            s.selection_range.start.character,
+            include_declaration=False,
+        )
+        count = len(refs)
+        title = f"{count} reference{'s' if count != 1 else ''}"
+
+        result.append(types.CodeLens(
+            range=s.selection_range,
+            command=types.Command(
+                title=title,
+                command="ide-navigator.showReferences",
+            ),
+        ))
+
+        if s.children:
+            _collect_code_lenses(lang, source, s.children, uri, result)
 
 
 # ── Workspace Symbols ─────────────────────────────────────────────────────
@@ -363,7 +435,7 @@ def references_command(ls: LanguageServer, *args):
 
     try:
         doc = ls.workspace.get_text_document(uri)
-        result = lang.get_references_with_context(doc.source, line, character, include_decl)
+        result = lang.get_references_with_context(doc.source, line, character, include_decl, uri)
     except Exception as e:
         logger.exception(f"References: failed on {uri}: {e}")
         return None
@@ -393,7 +465,7 @@ def call_graph_command(ls: LanguageServer, *args):
 
     try:
         doc = ls.workspace.get_text_document(uri)
-        result = lang.get_call_graph(doc.source)
+        result = lang.get_call_graph(doc.source, uri)
     except Exception as e:
         logger.exception(f"Call graph: failed on {uri}: {e}")
         return empty
