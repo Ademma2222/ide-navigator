@@ -224,39 +224,62 @@ export function activate(context: vscode.ExtensionContext) {
                 context.subscriptions,
             );
 
-            // Live-refresh: при изменении исходного файла перезапрашиваем граф
+            // Live-refresh: при изменении исходного файла перезапрашиваем граф.
+            // Debounce 1500ms — иначе при быстрой печати на большом файле
+            // граф пересчитывается каждые полсекунды и подтормаживает UI.
             let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+            let refreshing = false;
             const changeListener = vscode.workspace.onDidChangeTextDocument((e) => {
                 if (e.document.uri.toString() !== uri) return;
                 if (refreshTimer) clearTimeout(refreshTimer);
                 refreshTimer = setTimeout(async () => {
+                    if (refreshing) return;  // пропускаем, если предыдущий ещё идёт
+                    refreshing = true;
                     try {
                         const fresh: GraphData = await client.sendRequest('workspace/executeCommand', {
                             command: 'ide-navigator.callGraph',
                             arguments: [uri]
                         });
                         panel.webview.postMessage({ command: 'refresh', data: fresh });
-                    } catch (_) { /* ignore refresh errors */ }
-                }, 500);
+                    } catch (_) { /* ignore refresh errors */ } finally {
+                        refreshing = false;
+                    }
+                }, 1500);
             });
-            panel.onDidDispose(() => changeListener.dispose());
+            panel.onDidDispose(() => {
+                if (refreshTimer) clearTimeout(refreshTimer);
+                changeListener.dispose();
+            });
         }
     );
 
     context.subscriptions.push(showCallGraph);
 
-    // Команда для открытия панели референсов
+    // Команда для открытия панели референсов.
+    // Может быть вызвана двумя способами:
+    //   1. Из CodeLens — сервер передаёт (uri, line, character)
+    //   2. Из кнопки/курсора — аргументов нет, берём из activeTextEditor
     const showReferences = vscode.commands.registerCommand(
         'ide-navigator.showReferences',
-        async () => {
-            const editor = vscode.window.activeTextEditor;
-            if (!editor) {
-                vscode.window.showWarningMessage('Откройте файл для поиска референсов');
-                return;
-            }
+        async (argUri?: string, argLine?: number, argChar?: number) => {
+            let uri: string;
+            let position: vscode.Position;
+            let fileName: string;
 
-            const uri = editor.document.uri.toString();
-            const position = editor.selection.active;
+            if (typeof argUri === 'string' && typeof argLine === 'number' && typeof argChar === 'number') {
+                uri = argUri;
+                position = new vscode.Position(argLine, argChar);
+                fileName = path.basename(vscode.Uri.parse(argUri).fsPath);
+            } else {
+                const editor = vscode.window.activeTextEditor;
+                if (!editor) {
+                    vscode.window.showWarningMessage('Откройте файл для поиска референсов');
+                    return;
+                }
+                uri = editor.document.uri.toString();
+                position = editor.selection.active;
+                fileName = path.basename(editor.document.fileName);
+            }
 
             interface ReferenceItem {
                 line: number;
@@ -294,7 +317,7 @@ export function activate(context: vscode.ExtensionContext) {
                 { enableScripts: true }
             );
 
-            panel.webview.html = getReferencesHtml(data, path.basename(editor.document.fileName));
+            panel.webview.html = getReferencesHtml(data, fileName);
 
             panel.webview.onDidReceiveMessage(
                 async (message) => {

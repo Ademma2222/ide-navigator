@@ -247,33 +247,34 @@ def code_lens(
         doc = ls.workspace.get_text_document(uri)
         source = doc.source
         symbols = lang.get_symbols(source, uri)
+        # Один проход по AST вместо N полных обходов find_references.
+        ident_counts = lang.count_identifiers_by_name(source, uri)
     except Exception as e:
         logger.exception(f"CodeLens: failed on {uri}: {e}")
         return []
 
     lenses: list[types.CodeLens] = []
-    _collect_code_lenses(lang, source, symbols, uri, lenses)
+    _collect_code_lenses(symbols, ident_counts, uri, lenses)
     logger.info(f"CodeLens: {len(lenses)} lenses in {uri}")
     return lenses
 
 
 def _collect_code_lenses(
-    lang: BaseLanguage,
-    source: str,
     symbols: list[types.DocumentSymbol],
+    ident_counts: dict[str, int],
     uri: str,
     result: list[types.CodeLens],
 ) -> None:
-    """Рекурсивно собрать CodeLens для каждого символа."""
+    """Рекурсивно собрать CodeLens. Ссылки = количество идентификаторов минус сам декларатор."""
     for s in symbols:
-        # Считаем ссылки на этот символ (без объявления)
-        refs = lang.find_references(
-            source,
-            s.selection_range.start.line,
-            s.selection_range.start.character,
-            include_declaration=False,
-        )
-        count = len(refs)
+        line = s.selection_range.start.line
+        character = s.selection_range.start.character
+        # Общее число вхождений имени минус 1 (само определение).
+        # Для перегруженных имён (несколько функций с одним именем) это
+        # приближение завышает счётчик на число одноимённых определений —
+        # приемлемая цена за 10-100× ускорение на больших файлах.
+        total = ident_counts.get(s.name, 0)
+        count = max(0, total - 1)
         title = f"{count} reference{'s' if count != 1 else ''}"
 
         result.append(types.CodeLens(
@@ -281,11 +282,12 @@ def _collect_code_lenses(
             command=types.Command(
                 title=title,
                 command="ide-navigator.showReferences",
+                arguments=[uri, line, character],
             ),
         ))
 
         if s.children:
-            _collect_code_lenses(lang, source, s.children, uri, result)
+            _collect_code_lenses(s.children, ident_counts, uri, result)
 
 
 # ── Workspace Symbols ─────────────────────────────────────────────────────

@@ -265,6 +265,24 @@ class BaseLanguage(ABC):
         for child in node.children:
             self._collect_identifiers(child, name, result)
 
+    def count_identifiers_by_name(self, source: str, uri: str | None = None) -> dict[str, int]:
+        """Один проход AST → частоты всех идентификаторов в файле.
+
+        Используется для CodeLens: вместо N отдельных find_references
+        (один полный обход дерева на каждый символ) получаем карту за один обход.
+        """
+        tree = self._parse(source, uri)
+        counts: dict[str, int] = {}
+        stack = [tree.root_node]
+        while stack:
+            node = stack.pop()
+            if "identifier" in node.type:
+                name = node.text.decode("utf-8")
+                counts[name] = counts.get(name, 0) + 1
+            for child in node.children:
+                stack.append(child)
+        return counts
+
     # ── Hover Info ─────────────────────────────────────────────────────────
 
     # Маппинг SymbolKind → человекочитаемое название
@@ -306,15 +324,19 @@ class BaseLanguage(ABC):
         lines = source.splitlines()
         signature = lines[decl_line].strip() if decl_line < len(lines) else name
 
-        # Цикломатическая сложность (для функций/методов/конструкторов)
+        # Цикломатическая сложность (для функций/методов/конструкторов).
+        # Ищем AST-узел функции в точке декларации и считаем только его сложность,
+        # чтобы не обходить весь файл на каждый hover (на больших файлах → тормоза).
         complexity_str = ""
         if found.kind in (types.SymbolKind.Function, types.SymbolKind.Method,
                           types.SymbolKind.Constructor):
-            complexity_map: dict[str, int] = {}
-            self._collect_complexity(tree.root_node, complexity_map)
-            fqn = self._find_symbol_fqn(symbols, name) or name
-            cc = complexity_map.get(fqn)
-            if cc is not None:
+            func_node = self._find_func_node_at(
+                tree.root_node,
+                found.selection_range.start.line,
+                found.selection_range.start.character,
+            )
+            if func_node is not None:
+                cc = self._compute_complexity(func_node)
                 complexity_str = f" · complexity {cc}"
 
         # Markdown hover:
@@ -660,6 +682,19 @@ class BaseLanguage(ABC):
             name_node = node.child_by_field_name("name")
             if name_node:
                 return name_node.text.decode("utf-8")
+        return None
+
+    def _find_func_node_at(self, root, line: int, character: int):
+        """Найти AST-узел функции/метода, у которого имя начинается в (line, character).
+
+        Используется для дешёвого hover-lookup сложности одной функции,
+        без обхода всего файла.
+        """
+        node = root.descendant_for_point_range((line, character), (line, character))
+        while node is not None:
+            if self._get_func_def_name(node) is not None:
+                return node
+            node = node.parent
         return None
 
     def _get_call_name(self, node) -> str | None:
