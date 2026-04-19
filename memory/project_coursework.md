@@ -1,12 +1,14 @@
 ---
 name: Coursework — IDE Navigation Plugin
-description: Details of the main active project being developed
+description: Details of the main active project being developed. v0.2.0 shipped 2026-04-15 with Call Graph Phase 4-5.
 type: project
 ---
 
 **Project:** IDE navigation plugin based on static analysis — VS Code extension + Python LSP server.
 
-**Deadline:** End of April 2026. Today: 2026-04-13.
+**Deadline:** End of April 2026. Today: 2026-04-15.
+
+**Current release:** **v0.2.0** (tag `v0.2.0`, commit `c44a02c`, 2026-04-15) — Call Graph Phase 4-5: cyclomatic complexity, dead code highlight, cycle detection, PNG/SVG/Mermaid/DOT export, back/forward history.
 
 **Why:** 2nd year coursework at HSE Russia. Supervisor gave free rein on implementation.
 
@@ -43,7 +45,7 @@ Python, Java, C++, Go, JavaScript, TypeScript, Swift (опциональный �
 | 3 | Find All References | Готово — все 6 языков, LSP + кастомная WebView-панель |
 | 4 | Hover Info | Готово — Markdown с подсветкой синтаксиса |
 | 5 | Workspace Symbols | Готово — Ctrl+T |
-| 6 | Call Graph WebView | Готово — Obsidian-style force-directed граф, vis.js |
+| 6 | Call Graph WebView | Готово — v0.2.0: vis.js + тулбар + dead code + cycles + complexity + export + history |
 
 **Все фичи реализованы.** Плагин готов к сдаче.
 
@@ -57,6 +59,15 @@ Python, Java, C++, Go, JavaScript, TypeScript, Swift (опциональный �
 - **Phase 4 (Apr 27–30):** Call Graph WebView panel + final polish — ГОТОВО (раньше срока)
 - **Phase 5 (Apr 13):** Backend Quality & Hardening — ГОТОВО (за одну сессию)
 - **Phase 6 (Apr 14–30):** Пояснительная записка к курсовой — следующий шаг
+- **Call Graph Phase 4-5 (Apr 15):** Complexity + dead code + cycles + export + history — ГОТОВО (v0.2.0)
+
+---
+
+## Бэклог (следующие изменения, по просьбе Андрея 2026-04-15)
+
+1. **Удалить тоггл `Reverse`** из тулбара — не полезен на практике.
+2. **Удалить `Depth` slider** — аналогично.
+3. **Live-refresh Call Graph на didChange** — при добавлении/удалении функции в редакторе открытая панель не обновляется, нужно закрывать и открывать заново. Исправить через `workspace.onDidChangeTextDocument` → debounce ~300ms → пере-запрос `ide-navigator.callGraph` → `panel.webview.postMessage` → `rerender()` с новым `raw`.
 
 ---
 

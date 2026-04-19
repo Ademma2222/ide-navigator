@@ -8,6 +8,178 @@ type: project
 
 ---
 
+## Сессия 7 — 2026-04-15 (Call Graph Phase 4-5, v0.2.0)
+
+### Контекст
+После ship v0.1.0 (Сессия 6 → CI release pipeline) у нас был накопленный бэклог
+идей (его я держал в `~/.claude/.../project_coursework_ideas.md` — см. конец
+записи, косяк с путём). Андрей: «давай сделаем все, что связано с графом».
+Выбрали фазовый план: Phase 1 (backend edge kinds + node locations) → Phase 2
+(click-to-navigate) → Phase 3 (тулбар: search/reverse/group/depth/kind toggles)
+в первую сессию; Phase 4 (dead code + cycles + cyclomatic) + Phase 5 (export +
+history) — после того как Андрей сказал «давай обе сделаем».
+
+### Что сделано — Phase 1-3 (первая половина сессии)
+
+**Сервер** ([base.py](../ide-navigator/server/languages/base.py)):
+- Новый `_collect_symbol_info` собирает `name → {type, range}` из
+  `selection_range`, координаты идентификатора летят в каждый `node` графа
+  (`line`, `character`, `endLine`, `endCharacter`) — для клик-навигации.
+- Рёбра разделены на `kind: "call"` (function/method call) и
+  `kind: "contains"` (class → its method).
+
+**Клиент** ([extension.ts](../ide-navigator/extension/src/extension.ts)):
+- Webview-тулбар: search (debounced 120ms), Reverse, Group by class, Calls/
+  Contains visibility toggles, Depth select (1..5 BFS neighborhood).
+- `buildGraph()` pipeline: raw → group → reverse → depth → kind-filter.
+- Click/DoubleClick/Modifier-click → `postMessage({command:'openNode', line,
+  character})` → host вызывает `window.showTextDocument(uri, {selection})`.
+
+### Баги этой же сессии (после Phase 1-3)
+
+Андрей прислал три симптома: «при нажатии на вершину меня не переносит в код»,
+«group by class визуально ничего не меняет», «пунктирных красных рёбер нет».
+
+**Root cause всех трёх:** бандленный PyInstaller-сервер в
+`extension/bundled/server/win32-x64/` — это v0.1.0 бинарь без новых полей
+(`line`, `character`, `kind`). VS Code ходил в него, получал старый формат,
+новые фичи не работали. Фикс: `pyinstaller server.spec --clean --noconfirm` →
+copy dist/* → bundled/. Урок: при смене API сервера всегда пересобирать бандл.
+
+**MultiDict count bug.** В `large_test_file.py` у `MultiDict` 10 def-ов, а
+подпись `(8)` после включения Group by class. Причина: фронт держал
+`methodToClass[methodName] → className` (одна запись на метод), при коллизии
+имён (Vector2/BST/LRUCache все имеют `__init__`, `get`, `keys`) последний
+обработанный класс "забирал" метод себе. При подсчёте размер был неверный.
+
+**Фикс:** добавил второй индекс `classToMethods: className → Set<method>`;
+счётчик Group by class берётся из `.size`. `methodToClass` оставил как
+best-effort single-owner для collapse-логики. **Полноценное решение —
+Class.method-квалификация (Andrey's idea #2 из бэклога)**, но это касается
+Outline/Workspace Symbols/References, большая задача, отложена.
+
+**@property/@staticmethod не попадают в Outline и Call Graph.** Андрей
+прислал `StateMachine` с `@property def current_state` — узла в графе нет.
+Причина: `tree-sitter-python` заворачивает декорированные определения в
+`decorated_definition`. В [python_lang.py](../ide-navigator/server/languages/python_lang.py)
+`_extract_symbols` рекурсивно спускался только в `module`/`block`, не в
+`decorated_definition` — декорированные функции/классы молча терялись.
+
+**Фикс:** одна строка — добавил `"decorated_definition"` в tuple рекурсии.
+В TypeScript декораторы устроены иначе (как modifier, не wrapper) — там
+ничего править не пришлось.
+
+### Что сделано — Phase 4-5 (вторая половина сессии)
+
+**Сервер:** цикломатическая сложность по McCabe.
+- Новый `_BRANCH_NODE_TYPES: frozenset` в [base.py](../ide-navigator/server/languages/base.py)
+  со структурными AST-узлами (`if_statement`, `elif_clause`, `for_statement`,
+  `while_statement`, `case_clause`, `switch_block_statement_group`,
+  `except_clause`, `conditional_expression`, и т.д.). **Сырые токены
+  `if`/`for`/`while` не включены** — tree-sitter кладёт их как детей
+  statement-узла, включение ловило бы двойной счёт каждой ветки. `else_clause`
+  не считаем — fallthrough, не добавляет путь по McCabe.
+- `_collect_complexity(root, result)` — один проход по AST, для каждого
+  `function_definition`/`method_declaration`/`constructor_declaration` считает
+  `1 + число branch-узлов` в поддереве.
+- Результат летит в `node["complexity"]`.
+
+**Два бага complexity, пойманных тестами:**
+1. Python `branching(x)` с `if/elif/else` давал 4, ожидалось 3. Причина —
+   в наборе были сырые ключевые слова (`"if"`, `"for"`), tree-sitter-python
+   кладёт их как детей statement-узла → двойной счёт. Выкинул все токены.
+2. Java `complex(x)` давал 4, ожидалось 6 (1 + if + for + 3 cases). Причина —
+   Java-switch обёртывает каждый case в `switch_block_statement_group`,
+   которого не было в наборе; сам `switch_expression` был, но cases — нет.
+   Убрал `switch_statement`/`switch_expression`, добавил
+   `switch_block_statement_group`. Теперь 1+if+for+3cases = 6. ✓
+
+**Клиент** ([extension.ts](../ide-navigator/extension/src/extension.ts)):
+- `computeUnused(nodes, edges)` → Set узлов с нулевыми входящими call-рёбрами.
+  Классы/интерфейсы/структуры исключены (они контейнеры, не callable).
+  Тоггл `Unused` в тулбаре включает серую (#3a3a3a) заливку + opacity 0.4.
+- `computeCycleEdges(nodes, edges)` — итеративный Tarjan SCC (рекурсивный
+  стёк мог бы взорваться на больших графах). Рёбра между узлами одного SCC
+  размера ≥ 2 (или self-loops) → красные (#ff5c5c), толщина 2.4. Тоггл `Cycles`.
+- Цикломатика показывается в tooltip узла:
+  `method: transition (5 connections) · cyclomatic=8`.
+- **История back/forward:** кнопки `← →` в тулбаре + Alt+←/Alt+→. `historyPush`
+  на каждый клик по узлу; `goBack/goForward` не пушат (browser-style, forward
+  stack обрезается на новом клике).
+- **Export dropdown:** PNG (`canvas.toDataURL`), SVG (строю сам из
+  `network.getPositions()` + viewBox), Mermaid / DOT (копирую в буфер через
+  `vscode.env.clipboard.writeText`). Файловые экспорты идут через
+  `vscode.window.showSaveDialog` → `fs.writeFileSync`.
+
+### Тесты
+- Новые: `test_python_call_graph_node_locations`, `_edge_kinds`,
+  `_decorated_methods`, `_cyclomatic_complexity`, `test_java_call_graph_cyclomatic_complexity`
+- Python expected: `trivial=1, branching=3` (if+elif, else не считается),
+  `loopy=5` (for+if+except+while).
+- Java expected: `simple=1, complex=6` (1 + if + for + 3 cases, switch-обёртку
+  не считаем).
+- **Итог: 40/40 pytest зелёные, 11 из них — call_graph.**
+
+### Релиз v0.2.0
+- Бамп `0.1.0 → 0.2.0` в `extension/package.json` + `package-lock.json`.
+- Commit `c44a02c` — `feat: Call Graph v0.2.0 — complexity, dead code, cycles, export, history`.
+- Push, тег `v0.2.0` создан и запушен — это триггерит
+  `.github/workflows/release.yml`, который собирает `.vsix` под `win32-x64` +
+  `darwin-arm64` и публикует GitHub Release.
+- Separate commit `78298ee` — `log: record IDE Navigator v0.2.0 shipping session`
+  (первая версия записи ушла в `2CourseWork/log.md` в Obsidian vault до того
+  как я вспомнил про project-root `memory/session_log.md`).
+
+### Демо-файл
+Создал [demo_showcase.py](../ide-navigator/demo_showcase.py) — exercise для
+всех фич v0.2.0: `fib` (self-loop), `ping`↔`pong` (mutual recursion SCC),
+`unused_helper`/`debug_print` (dead code), `StateMachine.transition`
+(cyclomatic=8) + `@property current_state` + `@staticmethod factory` (регресс
+на декораторы), `Calculator` (contains + внутренние call-рёбра), `main`
+(связующий узел).
+
+### Бэклог-добавления (по просьбе Андрея «в список необходимых изменений позже»)
+1. **Удалить тоггл `Reverse`** из тулбара — Андрей говорит что в практике
+   не полезен.
+2. **Удалить `Depth` slider** — туда же.
+3. **Live-refresh Call Graph на `didChange`.** При добавлении или удалении
+   функции в редакторе открытая Call Graph панель НЕ обновляется — надо
+   закрывать и открывать заново. Исправить через
+   `workspace.onDidChangeTextDocument` → debounce ~300ms → пере-запрос
+   `ide-navigator.callGraph` → `panel.webview.postMessage({command:'refresh',
+   data})` → клиентский `rerender()` с новым `raw`. Это самый видимый UX-баг
+   после Phase 4-5 ship.
+
+Подробный ранжированный backlog лежал у меня в machine-local
+`~/.claude/.../memory/project_coursework_ideas.md`, и его надо перенести сюда —
+см. следующую сессию. CLAUDE.md говорит «project memory в `memory/` приоритетнее
+machine-local», так что этот файл тут главный.
+
+### Файлы, изменённые в этой сессии
+```
+ide-navigator/server/languages/base.py         — _BRANCH_NODE_TYPES, _collect_complexity,
+                                                 _collect_symbol_info, edge kinds, node locations
+ide-navigator/server/languages/python_lang.py  — decorated_definition fix (one line)
+ide-navigator/server/tests/test_call_graph.py  — +5 tests, итого 11
+ide-navigator/extension/src/extension.ts       — toolbar, computeUnused, computeCycleEdges,
+                                                 history stack, export (PNG/SVG/Mermaid/DOT)
+ide-navigator/extension/package.json           — version 0.1.0 → 0.2.0
+ide-navigator/extension/package-lock.json      — same
+ide-navigator/demo_showcase.py                 — НОВЫЙ (demo для всех фич)
+2CourseWork/log.md                             — wiki-log entry про эту сессию
+memory/session_log.md                          — эта запись
+```
+
+### Урок про память (для следующих сессий)
+CLAUDE.md говорит: «project memory в `memory/` at the project root — Git-tracked
+— takes priority over any machine-local memory path». Первые полчаса сессии я
+этого не учёл и писал backlog в `C:\Users\Andrey\.claude\projects\...\memory\`
+(machine-local путь). Андрей справедливо ткнул: «где ты в мемори записал что
+я тебя просил». Правильное место — **этот файл**, он в Git. Проверять при
+каждом старте: `ls memory/` в корне репы, не `~/.claude`.
+
+---
+
 ## Сессия 6 — 2026-04-13 (вечер, пост-верификация Phase 5)
 
 ### Контекст
