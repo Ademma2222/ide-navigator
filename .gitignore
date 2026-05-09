@@ -30,3 +30,4 @@ ide-navigator/large_test_file.py
 # IDE / local
 .vscode/
 .claude/settings.local.json
+.claude/worktrees/
