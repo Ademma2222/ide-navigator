@@ -8,6 +8,219 @@ type: project
 
 ---
 
+## Сессия 9 — 2026-05-09 (Architecture refactor — BaseLanguage → миксины, webview → media/)
+
+### Контекст
+После v0.3.0 + perf-патч (Сессия 8) рабочее дерево накопило крупный
+архитектурный рефакторинг, который физически уже был сделан (49 KB в
+working tree, тесты зелёные), но не закоммичен. Андрей вернулся в проект и
+спросил «вспомни на чём закончили». Я обнаружил расхождение: в `memory/`
+последний задокументированный шаг — v0.2.0 (Сессия 7), а в git уже есть
+v0.3.0 (`7d0ba3f`), perf-патч (`e91f34b`), плюс целый refactor как uncommitted
+working tree. Эта сессия закрывает оба пробела: коммитим refactor + актуализуем
+память.
+
+### Что было в working tree (готовый, но не закоммиченный refactor)
+
+**server/languages/base.py: 731 → 26 строк.** Был монолитный класс со всеми
+фичами (parse-cache, definition, references, hover, call graph) в одном файле.
+Стал фасадом: `BaseLanguage(ParseCacheMixin, DefinitionMixin, ReferencesMixin,
+HoverMixin, CallGraphMixin, ABC)`. Каждый миксин — один feature surface,
+независимо тестируется.
+- `_parse_cache.py` — tree-sitter parser + LRU + incremental parsing (`_parse`,
+  `_PARSE_CACHE_MAX`).
+- `_definition.py` — go-to-definition + cross-file через import tracking,
+  workspace-sandboxed.
+- `_references.py` — find-references + CodeLens-counts (`count_identifiers_by_name`).
+- `_hover.py` — Markdown-tooltip + complexity (`_find_func_node_at`,
+  `_compute_complexity`).
+- `_call_graph.py` — call graph + McCabe complexity + AST-хелперы
+  (`_BRANCH_NODE_TYPES`, FQN scope qualifiers).
+
+**Path-traversal sandbox в cross-file definition.** В Сессии 8 (v0.3.0)
+появился cross-file go-to-definition через резолв импортов — он мог
+теоретически утащить `from ../../../etc/passwd import *`. В этом рефакторинге
+[server.py](../ide-navigator/server/server.py) собирает `_get_workspace_roots(ls)` из
+`ls.workspace.folders` (pygls 2.x: dict, не list), пробрасывает в
+`find_cross_file_definition(workspace_roots=...)`. `DefinitionMixin._is_path_within_workspace`
+делает `Path.resolve()` (нейтрализует `..`-сегменты) + проверку через
+`is_relative_to`. На пустом списке roots (standalone-режим без workspace)
+проверка возвращает True — иначе одиночный файл вообще не зарезолвился бы.
+
+**extension.ts: −1067 строк.** Webview-разметка для Call Graph и References,
+которая лежала template-literals'ами прямо в TS-коде, вынесена в
+[extension/media/](../ide-navigator/extension/media/):
+`callGraph.{html,css,js}` + `references.{html,css,js}`. Совместный
+message-протокол host↔webview — в [webview-protocol.ts](../ide-navigator/extension/src/webview-protocol.ts).
+TS-код теперь только подгружает HTML через `panel.webview.asWebviewUri` и
+обрабатывает `postMessage`.
+
+**Swift убран полностью.** Проблема была хроническая: tree-sitter-swift нет
+на PyPI для Windows, на Linux в CI — тоже нет, поэтому `swift_lang.py`
+импортировался через try/except, в `LANGUAGE_MAP` подмешивался по флагу,
+PyInstaller-spec имел отдельную try/except-секцию. Поддержка стоила больше,
+чем приносила (Андрей и Дима оба не используют Swift). Удалил `swift_lang.py`,
+вычистил из requirements, server.spec, server.py LANGUAGE_MAP, README и
+extension/README.
+
+**Снижение шума логов.** `didOpen`, Outline counts, Definition results
+переведены INFO → DEBUG. На INFO остаются только cache-miss
+(`parse[python]: 80KB in 11.2ms`) и warnings — то, что нужно при дефолтных
+настройках для пояснительной записки.
+
+**test_architecture.py — 6 новых тестов.** MRO-инвариант (что миксины не
+исчезли из иерархии), переопределение `_PARSE_CACHE_MAX` через `BaseLanguage`,
+4 теста на `_is_path_within_workspace` (внутри/снаружи workspace, traversal с
+`..`-сегментами, пустой список roots).
+
+### Действия в этой сессии
+1. `pytest -q` через `venv/Scripts/python.exe` → **48/48 passed in 0.32s**.
+   Системный python питался без зависимостей — ошибка была в моём первом
+   запуске, не в коде.
+2. Один коммит `ecfc9a0` — `refactor: split BaseLanguage into mixins, extract
+   webviews to media/, drop Swift` (23 файла, +1983/−1823).
+3. Эта запись в session_log + актуализация project_coursework.
+
+### Что осталось не закоммиченным
+`.claude/worktrees/dazzling-darwin/` — Claude Code internal state, не должно
+попадать в git. Стоит добавить `.claude/worktrees/` в корневой `.gitignore`
+рядом с уже игнорируемым `.claude/settings.local.json` — но это не часть
+рефакторинга, отдельное housekeeping.
+
+### Текущее состояние master
+```
+e91f34b perf: 10-100x faster CodeLens, faster Hover, safer live-refresh
+ef43255 chore: bump version to 0.3.0
+7d0ba3f feat: v0.3.0 — CodeLens, incremental parsing, cross-file definition, FQN, live-refresh
+ecfc9a0 refactor: split BaseLanguage into mixins, extract webviews to media/, drop Swift  ← эта сессия
+```
+
+Версия в `package.json` — **0.3.0**. Релиз 0.3.0 уже опубликован тегом
+(см. Сессию 8). Текущий рефакторинг 0.3.x внутренний — публичный API не
+поменялся, бамп версии не нужен.
+
+### Файлы, изменённые в этой сессии
+```
+ide-navigator/server/languages/base.py            — 731 → 26 строк, фасад
+ide-navigator/server/languages/_parse_cache.py    — НОВЫЙ
+ide-navigator/server/languages/_definition.py     — НОВЫЙ (+ workspace sandbox)
+ide-navigator/server/languages/_references.py     — НОВЫЙ
+ide-navigator/server/languages/_hover.py          — НОВЫЙ
+ide-navigator/server/languages/_call_graph.py     — НОВЫЙ
+ide-navigator/server/languages/swift_lang.py      — УДАЛЁН
+ide-navigator/server/server.py                    — workspace_roots, swift убран, лог-уровни
+ide-navigator/server/server.spec                  — swift try/except убран
+ide-navigator/server/requirements.txt             — tree-sitter-swift убран
+ide-navigator/server/tests/test_architecture.py   — НОВЫЙ (6 тестов)
+ide-navigator/extension/src/extension.ts          — −1067 строк, webview через media/
+ide-navigator/extension/src/webview-protocol.ts   — НОВЫЙ (host↔webview контракт)
+ide-navigator/extension/media/callGraph.{html,css,js}    — НОВЫЕ
+ide-navigator/extension/media/references.{html,css,js}   — НОВЫЕ
+ide-navigator/extension/README.md                 — Swift упоминание убрано
+ide-navigator/.gitignore                          — /new.cpp + /scratch/ исключены
+ide-navigator/demo_showcase.py                    — мелкие правки
+README.md                                         — Swift упоминание убрано
+memory/session_log.md                             — эта запись
+memory/project_coursework.md                      — refactor-снимок, бэклог обновлён
+```
+
+---
+
+## Сессия 8 — 2026-04-19/20 (v0.3.0 + perf-патч)
+
+> **NB:** записывается ретроспективно в Сессии 9 — в момент работы я этого не
+> логировал. Описание реконструировано из git log и diff'ов коммитов
+> `7d0ba3f` (v0.3.0) + `ef43255` (version bump) + `e91f34b` (perf).
+
+### Контекст
+После v0.2.0 (Сессия 7) Андрей попросил «давай ещё фич». Из бэклога Сессии 7
+оставались: убрать Reverse, убрать Depth slider, live-refresh Call Graph на
+`didChange`. Решили добавить ещё четыре крупные фичи: **CodeLens** (счётчики
+референсов над функциями), **incremental parsing** tree-sitter (использовать
+старое дерево как hint), **cross-file Go to Definition** через резолв
+импортов, **FQN-квалификация** в Call Graph (`Class.method` вместо
+коллидирующих имён).
+
+### Коммит `7d0ba3f` — v0.3.0
+
+**CodeLens** ([extension.ts](../ide-navigator/extension/src/extension.ts) +
+[server.py](../ide-navigator/server/server.py)). Над каждой функцией/классом
+плавает `42 references` — клик открывает References-панель. Сервер реализует
+`textDocument/codeLens` поверх существующего `find_references`. Клиентский
+`CodeLensProvider` подписан на `didChange` для обновления.
+
+**Incremental parsing** в `BaseLanguage._parse`. tree-sitter поддерживает
+вторым аргументом `old_tree` — переиспользует AST для неизменённых участков.
+Кеш теперь хранит per-URI «последнее дерево», `_parse(source, uri)` передаёт
+его в parser. Ускорение существенное на больших файлах при мелких правках.
+
+**Cross-file Go to Definition.** [python_lang.py](../ide-navigator/server/languages/python_lang.py)
+и [javascript_lang.py](../ide-navigator/server/languages/javascript_lang.py)
+получили парсеры импортов: `from foo import bar` / `import foo` / `import bar
+from "./baz"` / `require("./baz")`. `find_cross_file_definition` — общий
+метод в `BaseLanguage`: если single-file definition не нашёлся, парсит
+импорты, резолвит относительный путь, вызывает `find_definition` на целевом
+файле через `LANGUAGE_MAP`. На этом этапе ещё без workspace-sandbox — добавлен
+позже в Сессии 9.
+
+**FQN scope qualifiers в Call Graph.** Раньше при `class A: def get(self): ...`
+и `class B: def get(self): ...` оба узла назывались `get` и сливались в один.
+Теперь node ID — `A.get` / `B.get`, label — `get`. Решает MultiDict-баг из
+Сессии 7 на уровне идентификаторов, не только подсчёта.
+
+**Cyclomatic complexity в Hover.** В Сессии 7 complexity показывалась только
+в Call Graph tooltip; теперь и в обычном hover для функций/методов:
+`method: transition · cyclomatic 8`. Был баг с FQN-резолвом (искал по короткому
+имени, для overloaded возвращал не ту функцию) — пофикшен.
+
+**Live-refresh Call Graph.** `workspace.onDidChangeTextDocument` →
+debounce 500ms → пере-запрос `ide-navigator.callGraph` →
+`panel.webview.postMessage({command:'refresh', data})` →
+клиентский `rerender()` с новым `raw`. Закрывает третий пункт бэклога
+Сессии 7.
+
+**Compact toolbar.** `display: flex; flex-wrap: wrap` — тулбар укладывается в
+несколько рядов вместо горизонтального скролла на узких панелях.
+
+**Reverse и Depth удалены.** Закрывает первые два пункта бэклога.
+
+**Тесты.** +2 теста на hover-complexity → 42/42 passed.
+
+### Коммит `ef43255` — version bump 0.1.0 → 0.3.0
+Просто `package.json` + `package-lock.json` (мажорный бамп через 0.2.0 в
+v0.2.0 уже был; v0.3.0 — следующий релиз).
+
+### Коммит `e91f34b` — perf-патч (на следующий день)
+
+Андрей запустил v0.3.0 на реальных файлах и заметил тормоза:
+1. **CodeLens на больших файлах.** Для каждого символа дёргался полный
+   `find_references` — N×O(N) обходов AST. Заменил на единственный
+   `count_identifiers_by_name(name → count)` — один проход AST собирает
+   счётчики для всех имён сразу. **10-100× ускорение** на файлах 50-100 KB.
+   Бонус: клик по CodeLens теперь передаёт `(uri, line, character)` →
+   References-панель открывается на правильном символе (раньше открывалась
+   ближайшая по имени).
+2. **Hover complexity walk.** Считал complexity для всей функции через
+   полный обход поддерева. Добавил `_find_func_node_at(line, char)` →
+   `_compute_complexity(node)` — работа только над одной функцией,
+   не файлом.
+3. **Live-refresh debounce 500ms → 1500ms** + флаг `refreshing`. На больших
+   файлах debounce 500ms был слишком агрессивный: пользователь печатал, успевал
+   запуститься предыдущий запрос, начинался следующий, копились overlapping
+   queries. 1500ms + guard-flag решают.
+4. **Dispose refresh-таймера** при закрытии панели.
+
+### Текущее состояние после Сессии 8
+```
+ef43255 chore: bump version to 0.3.0
+7d0ba3f feat: v0.3.0 — CodeLens, incremental parsing, cross-file definition, FQN, live-refresh
+e91f34b perf: 10-100x faster CodeLens, faster Hover, safer live-refresh
+```
+42/42 tests passed (через год Сессия 9 добавит ещё 6 архитектурных → 48/48).
+Релиз `v0.3.0` опубликован тегом (CI собрал .vsix под win32-x64 + darwin-arm64).
+
+---
+
 ## Сессия 7 — 2026-04-15 (Call Graph Phase 4-5, v0.2.0)
 
 ### Контекст

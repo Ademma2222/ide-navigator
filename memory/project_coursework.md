@@ -1,14 +1,16 @@
 ---
 name: Coursework — IDE Navigation Plugin
-description: Details of the main active project being developed. v0.2.0 shipped 2026-04-15 with Call Graph Phase 4-5.
+description: Details of the main active project being developed. v0.3.0 shipped 2026-04-19, mixin refactor committed 2026-05-09.
 type: project
 ---
 
 **Project:** IDE navigation plugin based on static analysis — VS Code extension + Python LSP server.
 
-**Deadline:** End of April 2026. Today: 2026-04-15.
+**Deadline:** End of April 2026 (просрочено для plugin-коммитов; пояснительная записка ещё ведётся).
 
-**Current release:** **v0.2.0** (tag `v0.2.0`, commit `c44a02c`, 2026-04-15) — Call Graph Phase 4-5: cyclomatic complexity, dead code highlight, cycle detection, PNG/SVG/Mermaid/DOT export, back/forward history.
+**Current release:** **v0.3.0** (tag `v0.3.0`, commit `7d0ba3f`, 2026-04-19) — CodeLens, incremental parsing, cross-file Go to Definition (Python + JS/TS imports), FQN-квалификация в Call Graph, complexity в Hover, live-refresh Call Graph. Reverse и Depth toggle убраны из тулбара. Perf-патч `e91f34b` (2026-04-20) делает CodeLens 10-100× быстрее.
+
+**Latest commit:** `ecfc9a0` (2026-05-09) — refactor: BaseLanguage разбит на 5 миксинов, webview-разметка вынесена в `extension/media/`, Swift убран. Внутренний рефакторинг, версия не бампается.
 
 **Why:** 2nd year coursework at HSE Russia. Supervisor gave free rein on implementation.
 
@@ -30,7 +32,9 @@ type: project
 
 ## Languages
 
-Python, Java, C++, Go, JavaScript, TypeScript, Swift (опциональный — только Mac).
+Python, Java, C++, Go, JavaScript, TypeScript.
+
+Swift был удалён в коммите `ecfc9a0` (2026-05-09): tree-sitter-swift нет на PyPI для Windows и Linux-CI, поддержка через try/except + per-platform ветвления приносила больше шума, чем пользы (ни Андрей, ни Дима не используют Swift).
 
 Каждый язык — отдельный модуль в `server/languages/`, наследует `BaseLanguage`. У каждого наследника есть class-атрибут `LANGUAGE_ID` (например, `"python"`, `"typescript"`) — используется для подсветки синтаксиса в Markdown-hover и в WebView-панели References.
 
@@ -41,11 +45,13 @@ Python, Java, C++, Go, JavaScript, TypeScript, Swift (опциональный �
 | # | Фича | Статус |
 |---|------|--------|
 | 1 | Document Outline | Готово — все 6 языков |
-| 2 | Go to Definition (single-file) | Готово — все 6 языков |
-| 3 | Find All References | Готово — все 6 языков, LSP + кастомная WebView-панель |
-| 4 | Hover Info | Готово — Markdown с подсветкой синтаксиса |
+| 2 | Go to Definition | Готово — single-file все 6 языков, **cross-file через резолв импортов для Python и JS/TS (v0.3.0)**, sandboxed по workspace roots |
+| 3 | Find All References | Готово — LSP + кастомная WebView-панель |
+| 4 | Hover Info | Готово — Markdown с подсветкой + cyclomatic complexity для функций (v0.3.0) |
 | 5 | Workspace Symbols | Готово — Ctrl+T |
-| 6 | Call Graph WebView | Готово — v0.2.0: vis.js + тулбар + dead code + cycles + complexity + export + history |
+| 6 | Call Graph WebView | Готово — v0.2.0: dead code, cycles, complexity, export, history. v0.3.0: live-refresh на didChange, FQN-квалификация (Class.method), compact flex-wrap toolbar |
+| 7 | **CodeLens** | Готово (v0.3.0) — счётчики референсов над функциями/классами, клик открывает References. Single-pass `count_identifiers_by_name` (10-100× быстрее N×find_references) |
+| 8 | **Incremental parsing** | Готово (v0.3.0) — tree-sitter `old_tree` hint в `_parse(source, uri)` |
 
 **Все фичи реализованы.** Плагин готов к сдаче.
 
@@ -63,11 +69,13 @@ Python, Java, C++, Go, JavaScript, TypeScript, Swift (опциональный �
 
 ---
 
-## Бэклог (следующие изменения, по просьбе Андрея 2026-04-15)
+## Бэклог
 
-1. **Удалить тоггл `Reverse`** из тулбара — не полезен на практике.
-2. **Удалить `Depth` slider** — аналогично.
-3. **Live-refresh Call Graph на didChange** — при добавлении/удалении функции в редакторе открытая панель не обновляется, нужно закрывать и открывать заново. Исправить через `workspace.onDidChangeTextDocument` → debounce ~300ms → пере-запрос `ide-navigator.callGraph` → `panel.webview.postMessage` → `rerender()` с новым `raw`.
+Всё из бэклога Сессии 7 закрыто в v0.3.0 (Сессия 8): Reverse и Depth удалены, live-refresh Call Graph через `onDidChangeTextDocument` → debounce 1500ms (после perf-патча) → `postMessage('refresh')` работает.
+
+Открытые мелочи (Сессия 9):
+- Добавить `.claude/worktrees/` в корневой `.gitignore` (Claude Code internal state, сейчас засоряет `git status`).
+- Пояснительная записка к курсовой — основная задача после всех plugin-коммитов.
 
 ---
 
@@ -156,48 +164,75 @@ Python, Java, C++, Go, JavaScript, TypeScript, Swift (опциональный �
 ```
 ide-navigator/
 ├── extension/                  ← VS Code extension (TypeScript)
-│   ├── src/extension.ts        ← LSP client + commands + WebView-генераторы
-│   ├── package.json            ← commands, keybindings (shift+f12 → наша панель)
-│   └── tsconfig.json           ← skipLibCheck: true (TS 6.0 workaround)
+│   ├── src/
+│   │   ├── extension.ts        ← LSP client + commands + WebView host (без HTML — он в media/)
+│   │   └── webview-protocol.ts ← message-контракт host ↔ webview
+│   ├── media/                  ← webview-разметка (вынесена из extension.ts в Сессии 9)
+│   │   ├── callGraph.{html,css,js}
+│   │   └── references.{html,css,js}
+│   ├── package.json            ← commands, keybindings, configuration
+│   └── tsconfig.json
 └── server/                     ← Python LSP сервер
-    ├── server.py               ← pygls handlers + custom commands (callGraph, references)
+    ├── server.py               ← pygls handlers + custom commands + workspace roots
     ├── requirements.txt
     └── languages/
-        ├── base.py             ← BaseLanguage: общий интерфейс + LANGUAGE_ID атрибут
-        ├── python_lang.py
+        ├── base.py             ← фасад (26 строк) — наследует 5 миксинов
+        ├── _parse_cache.py     ← ParseCacheMixin: tree-sitter + LRU + incremental parsing
+        ├── _definition.py      ← DefinitionMixin: go-to-def + cross-file (workspace-sandboxed)
+        ├── _references.py      ← ReferencesMixin: find-references + CodeLens-counts
+        ├── _hover.py           ← HoverMixin: tooltip + complexity
+        ├── _call_graph.py      ← CallGraphMixin: call graph + McCabe + AST helpers
+        ├── python_lang.py      ← + парсер импортов для cross-file (from/import)
         ├── java_lang.py
         ├── cpp_lang.py
         ├── go_lang.py
-        ├── javascript_lang.py
-        ├── typescript_lang.py
-        └── swift_lang.py       ← Mac-only (tree_sitter_swift нет на PyPI для Windows)
+        ├── javascript_lang.py  ← + парсер импортов для cross-file (import/require)
+        └── typescript_lang.py
 ```
 
 ---
 
 ## Key Implementation Details
 
-### BaseLanguage (base.py)
-- `LANGUAGE_ID: str` — переопределяется в каждом наследнике, используется для подсветки синтаксиса в hover и в References-панели
-- `get_symbols(source)` → AST → `_extract_symbols()` (переопределяется)
-- `find_definition(source, line, char)` → leaf node → identifier → рекурсивный поиск в символах файла
-- `find_references(source, line, char, include_decl)` → обход AST, сбор identifier-узлов с нужным именем
-- `get_hover(source, line, char)` → Markdown-блок с подсветкой (через `LANGUAGE_ID`) + жирный kind + em-dash + line N
-- `get_references_with_context(source, line, char, include_decl)` → dict с `name`, `language`, `refs: [{line, character, endCharacter, snippet}]` для WebView-панели
-- `get_call_graph(source)` → nodes/edges для vis.js, включая класс-методы как hub-узлы
+### BaseLanguage (base.py — 26 строк, фасад)
+Композиция миксинов в строгом порядке (важен для MRO — переопределение `_PARSE_CACHE_MAX` через `BaseLanguage` атрибут должно перебивать миксин):
+```python
+class BaseLanguage(ParseCacheMixin, DefinitionMixin, ReferencesMixin,
+                   HoverMixin, CallGraphMixin, ABC):
+    @abstractmethod
+    def get_parser(self) -> Parser: ...
+    @abstractmethod
+    def _extract_symbols(self, node) -> list[DocumentSymbol]: ...
+    def get_symbols(self, source, uri=None) -> list[DocumentSymbol]:
+        tree = self._parse(source, uri)
+        return self._extract_symbols(tree.root_node)
+```
+
+- `LANGUAGE_ID: str` — переопределяется в каждом наследнике, используется для подсветки в hover и References-панели
+
+### Миксины — ключевые методы
+- **ParseCacheMixin**: `_parse(source, uri=None)` — tree-sitter + LRU + incremental (`old_tree` hint per-URI). `_PARSE_CACHE_MAX = 32`, настраивается через `ideNavigator.cacheSize`. Cache-miss логируется на INFO: `parse[python]: 80KB in 11.2ms`.
+- **DefinitionMixin**: `find_definition(source, line, char)` — single-file. `find_cross_file_definition(source, line, char, uri, language_map, workspace_roots)` — резолвит импорт, идёт в целевой файл, возвращает `Location`. `_is_path_within_workspace` — sandbox через `Path.resolve()` + `is_relative_to`.
+- **ReferencesMixin**: `find_references(source, line, char, include_decl)`, `get_references_with_context(...)` для WebView-панели, `count_identifiers_by_name(source) → dict[name, count]` для CodeLens (single-pass, 10-100× быстрее N×find_references).
+- **HoverMixin**: `get_hover(source, line, char)` — Markdown с подсветкой + kind + line N + complexity (через `_find_func_node_at` → `_compute_complexity`).
+- **CallGraphMixin**: `get_call_graph(source)` — nodes/edges для vis.js. FQN scope qualifiers (`Class.method` ID, `method` label). Edge `kind: "call" | "contains"`. `_BRANCH_NODE_TYPES` — McCabe complexity для каждой функции.
 
 ### server.py — LSP handlers и кастомные команды
 - `textDocument/documentSymbol` → Outline
-- `textDocument/definition` → Go to Definition
+- `textDocument/definition` → Go to Definition (single-file → cross-file через `find_cross_file_definition` с `workspace_roots` для sandbox)
 - `textDocument/references` → Find All References (нативный LSP)
 - `textDocument/hover` → Hover Info
+- `textDocument/codeLens` → CodeLens с reference counts (через `count_identifiers_by_name`)
 - `workspace/symbol` → Workspace Symbols
 - `@server.command("ide-navigator.callGraph")` → Call Graph WebView data
 - `@server.command("ide-navigator.references")` → References Panel WebView data
+- Helper'ы: `_get_workspace_roots(ls)` собирает Path-список из `ls.workspace.folders` (pygls 2.x dict), `_folder_uri_to_path` срезает ведущий `/` из Windows file:///C:/... URI
 
-### extension.ts — WebView-панели
-- **Call Graph**: force-directed vis.js, Obsidian-style (тёмный фон #191919, цвета по SymbolKind, glow-shadow, класс → методы рёбрами containment)
-- **References Panel**: highlight.js (atom-one-dark), список референсов с номерами строк и сниппетами, клик → прыжок в файл через `postMessage` + `window.showTextDocument`
+### extension.ts + media/ — WebView-панели
+**С Сессии 9 разметка лежит в `extension/media/` отдельными файлами**, TS-код только подгружает HTML через `panel.webview.asWebviewUri`. Совместный message-контракт host↔webview — в `extension/src/webview-protocol.ts`.
+
+- **Call Graph** (`media/callGraph.{html,css,js}`): force-directed vis.js, Obsidian-style (тёмный фон #191919, цвета по SymbolKind, glow-shadow, класс → методы рёбрами containment). Live-refresh через `postMessage('refresh', data)` с дебаунсом 1500ms.
+- **References Panel** (`media/references.{html,css,js}`): highlight.js (atom-one-dark), список референсов с номерами строк и сниппетами, клик → прыжок в файл через `postMessage` + `window.showTextDocument`
 
 ### Keybindings
 - `Shift+F12` перебинжен на `ide-navigator.showReferences` в `package.json` → нашa панель открывается вместо встроенного Peek-виджета. Встроенный Peek как fallback при Ctrl+Click на определение остаётся (перехватить нельзя).
@@ -232,8 +267,6 @@ git clone https://github.com/Ademma2222/ide-navigator
 cd ide-navigator/server
 python3 -m venv venv
 venv/bin/pip install -r requirements.txt
-# tree_sitter_swift установить отдельно если нужен Swift:
-# venv/bin/pip install tree-sitter-swift
 cd ../extension
 npm install
 npm run compile
@@ -243,7 +276,6 @@ npm run compile
 **Разница Windows/Mac:**
 - Python path в venv: `Scripts/python.exe` (Win) vs `bin/python` (Mac)
 - extension.ts определяет ОС через `process.platform === 'win32'` — автоматически
-- Swift: только на Mac, на Windows сервер стартует без него (warning в логах)
 
 ---
 
