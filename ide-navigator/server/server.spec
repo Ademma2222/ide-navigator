@@ -33,15 +33,6 @@ for pkg in _grammar_packages:
         # Grammar not installed on this platform — skip
         pass
 
-# Swift is optional (Mac-only). Try to include if present.
-try:
-    d, b, h = collect_all("tree_sitter_swift")
-    datas += d
-    binaries += b
-    hiddenimports += h
-except Exception:
-    pass
-
 # pygls + lsprotocol must be fully collected (pygls uses dynamic feature registration)
 for pkg in ("pygls", "lsprotocol"):
     d, b, h = collect_all(pkg)

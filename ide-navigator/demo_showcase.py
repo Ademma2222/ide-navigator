@@ -5,16 +5,14 @@ Checklist what to test in the webview toolbar:
   1. Открытие графа:         Ctrl+Shift+P → "IDE Navigator: Show Call Graph"
   2. Click-to-navigate:      Ctrl/Shift/Alt+Click или Double-Click по узлу
   3. Search:                 введи "fib" / "ping" / "state" — подсветка
-  4. Reverse:                галка — стрелки call-рёбер перевернутся
-  5. Group by class:         методы свернутся в свои классы, подпись "(N)"
-  6. Calls / Contains:       раздельно скрываешь серые и красные пунктирные рёбра
-  7. Unused (Phase 4):       галка — unused_helper / debug_print серые, opacity 0.4
-  8. Cycles (Phase 4):       галка — fib (self-loop) и ping↔pong красные и толстые
-  9. Depth:                  кликни узел + выбери 1..5 — N-hop neighborhood
- 10. Cyclomatic (Phase 4):   наведи на transition() — tooltip "... · cyclomatic=8"
- 11. Export (Phase 5):       dropdown → PNG/SVG (диалог сохранения), Mermaid/DOT (в буфер)
- 12. History (Phase 5):      кликай узлы, жми ← → или Alt+←/Alt+→
- 13. @property fix:          current_state попадает в граф и контейн-ребром к StateMachine
+  4. Group by class:         методы свернутся в свои классы, подпись "(N)"
+  5. Calls / Contains:       раздельно скрываешь серые и красные пунктирные рёбра
+  6. Unused:                 галка — unused_helper / debug_print серые, opacity 0.4
+  7. Cycles:                 галка — fib (self-loop) и ping↔pong красные и толстые
+  8. Cyclomatic:             наведи на transition() — tooltip "... · cyclomatic=8"
+  9. Export:                 dropdown → PNG/SVG (диалог сохранения), Mermaid/DOT (в буфер)
+ 10. History:                кликай узлы, жми ← → или Alt+←/Alt+→
+ 11. @property fix:          current_state попадает в граф и контейн-ребром к StateMachine
 """
 
 

@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src 'none'; script-src https://unpkg.com __CSP_SOURCE__; style-src __CSP_SOURCE__ 'unsafe-inline'; img-src __CSP_SOURCE__ data:;">
+    <link rel="stylesheet" href="__CSS_URI__">
+</head>
+<body>
+    <div id="toolbar">
+        <span class="group">
+            <button id="historyBack" title="Back (Alt+←)" disabled>←</button>
+            <button id="historyFwd" title="Forward (Alt+→)" disabled>→</button>
+            <div class="divider"></div>
+            <input id="search" type="text" placeholder="Search…" spellcheck="false">
+        </span>
+        <div class="divider"></div>
+        <span class="group">
+            <label title="Collapse methods into their container classes">
+                <input type="checkbox" id="groupByClass"> Group
+            </label>
+            <label title="Show gray edges (function/method calls)">
+                <input type="checkbox" id="showCall" checked> Calls
+            </label>
+            <label title="Show red dashed edges (class → its methods)">
+                <input type="checkbox" id="showContains" checked> Contains
+            </label>
+        </span>
+        <div class="divider"></div>
+        <span class="group">
+            <label title="Dim functions with zero incoming calls (potential dead code)">
+                <input type="checkbox" id="highlightUnused"> Unused
+            </label>
+            <label title="Highlight edges that are part of a strongly-connected cycle">
+                <input type="checkbox" id="markCycles"> Cycles
+            </label>
+            <div class="divider"></div>
+            <label title="Export current view">
+                Export
+                <select id="exportFmt">
+                    <option value="">—</option>
+                    <option value="png">PNG</option>
+                    <option value="svg">SVG</option>
+                    <option value="mermaid">Mermaid</option>
+                    <option value="dot">DOT</option>
+                </select>
+            </label>
+        </span>
+    </div>
+    <div id="graph"></div>
+    <div id="stats"></div>
+    <div id="legend"></div>
+    <div id="info">No call relationships found</div>
+    <script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"
+            integrity="sha384-yxKDWWf0wwdUj/gPeuL11czrnKFQROnLgY8ll7En9NYoXibgg3C6NK/UDHNtUgWJ"
+            crossorigin="anonymous"></script>
+    <script src="__JS_URI__"></script>
+</body>
+</html>

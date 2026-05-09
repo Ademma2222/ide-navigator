@@ -1,0 +1,90 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    overflow: hidden;
+    background: #191919;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    color: #ccc;
+}
+
+#graph { width: 100vw; height: 100vh; }
+
+/* Тулбар */
+#toolbar {
+    position: fixed; top: 10px; left: 14px; right: 14px;
+    background: rgba(30,30,30,0.9); border: 1px solid #333;
+    border-radius: 8px; padding: 6px 10px;
+    display: flex; align-items: center; gap: 6px;
+    flex-wrap: wrap;
+    backdrop-filter: blur(8px); z-index: 10;
+    font-size: 11px;
+}
+#toolbar .group {
+    display: flex; align-items: center; gap: 6px;
+    white-space: nowrap;
+}
+#toolbar input[type="text"] {
+    background: #262626; color: #ddd;
+    border: 1px solid #3a3a3a; border-radius: 4px;
+    padding: 3px 6px; font-size: 11px;
+    width: 130px;
+    font-family: inherit;
+    outline: none;
+}
+#toolbar input[type="text"]:focus { border-color: #7f6df2; }
+#toolbar input[type="checkbox"] { accent-color: #7f6df2; margin: 0; }
+#toolbar label {
+    display: flex; align-items: center; gap: 3px;
+    color: #bbb; cursor: pointer; user-select: none;
+}
+#toolbar select {
+    background: #262626; color: #ddd;
+    border: 1px solid #3a3a3a; border-radius: 4px;
+    padding: 2px 4px; font-size: 11px;
+    font-family: inherit;
+    outline: none;
+}
+#toolbar button {
+    background: #262626; color: #ddd;
+    border: 1px solid #3a3a3a; border-radius: 4px;
+    padding: 2px 6px; font-size: 11px;
+    font-family: inherit;
+    cursor: pointer;
+    outline: none;
+    min-width: 22px;
+}
+#toolbar button:hover:not(:disabled) { border-color: #7f6df2; color: #fff; }
+#toolbar button:disabled { opacity: 0.35; cursor: default; }
+#toolbar .divider {
+    width: 1px; background: #333; align-self: stretch;
+    min-height: 16px;
+}
+#toolbar .hint {
+    color: #666; font-size: 10px; font-style: italic;
+}
+
+/* Легенда */
+#legend {
+    position: fixed; bottom: 14px; left: 14px;
+    background: rgba(30,30,30,0.85); border: 1px solid #333;
+    border-radius: 8px; padding: 10px 14px;
+    display: flex; flex-direction: column; gap: 6px;
+    backdrop-filter: blur(8px); z-index: 10;
+}
+#legend .row { display: flex; align-items: center; gap: 8px; }
+#legend .dot {
+    width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
+}
+#legend .label { color: #aaa; font-size: 11px; }
+
+/* Статистика */
+#stats {
+    position: fixed; bottom: 14px; right: 14px;
+    color: #666; font-size: 11px; z-index: 10;
+    background: rgba(30,30,30,0.85); border: 1px solid #333;
+    border-radius: 6px; padding: 6px 10px;
+}
+
+#info {
+    display: none; color: #555; text-align: center;
+    padding-top: 40vh; font-size: 15px;
+}

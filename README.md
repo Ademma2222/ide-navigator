@@ -27,7 +27,7 @@
 
 ## Поддерживаемые языки
 
-Python, Java, C++, Go, JavaScript, TypeScript, Swift (опционально, только на macOS).
+Python, Java, C++, Go, JavaScript, TypeScript.
 
 Каждый язык реализован как отдельный модуль, наследующий общий базовый класс `BaseLanguage`.
 
@@ -122,8 +122,7 @@ ide-navigator/
         ├── cpp_lang.py
         ├── go_lang.py
         ├── javascript_lang.py
-        ├── typescript_lang.py
-        └── swift_lang.py       — опциональный модуль, активен только на macOS
+        └── typescript_lang.py
 ```
 
 ---

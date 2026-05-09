@@ -6,4 +6,3 @@ tree-sitter-cpp
 tree-sitter-go
 tree-sitter-javascript
 tree-sitter-typescript
-tree-sitter-swift

@@ -1,6 +1,6 @@
 # IDE Navigator
 
-Lightweight static-analysis navigation for **Python, Java, C/C++, Go, JavaScript, TypeScript** (and Swift on macOS). Powered by tree-sitter — no language server runtimes, no extra installs.
+Lightweight static-analysis navigation for **Python, Java, C/C++, Go, JavaScript, TypeScript**. Powered by tree-sitter — no language server runtimes, no extra installs.
 
 ## Features
 

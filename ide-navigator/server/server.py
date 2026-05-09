@@ -27,13 +27,6 @@ from languages.go_lang import GoLanguage
 from languages.javascript_lang import JavaScriptLanguage
 from languages.typescript_lang import TypeScriptLanguage
 
-try:
-    from languages.swift_lang import SwiftLanguage
-    _swift_available = True
-except ModuleNotFoundError:
-    _swift_available = False
-    logger.warning("tree_sitter_swift не установлен — Swift не поддерживается")
-
 server = LanguageServer("ide-navigator", "v0.1")
 
 # ── Реестр языков: расширение файла → языковой модуль ─────────────────────
@@ -49,7 +42,6 @@ LANGUAGE_MAP = {
     ".js":    JavaScriptLanguage(),
     ".ts":    TypeScriptLanguage(),
     ".tsx":   TypeScriptLanguage(),
-    **({".swift": SwiftLanguage()} if _swift_available else {}),
 }
 
 
@@ -58,6 +50,39 @@ def get_language(uri: str):
     path = urlparse(uri).path
     ext = os.path.splitext(path)[1].lower()
     return LANGUAGE_MAP.get(ext)
+
+
+def _folder_uri_to_path(folder_uri: str) -> Path:
+    """Конвертировать workspace-folder URI (`file:///C:/foo`) в `Path`.
+
+    На Windows путь из urlparse() начинается с `/C:/...` — лишний `/`
+    нужно срезать, иначе `Path(...)` получится относительным.
+    """
+    folder_path = unquote(urlparse(folder_uri).path)
+    if os.name == "nt" and folder_path.startswith("/"):
+        folder_path = folder_path[1:]
+    return Path(folder_path)
+
+
+def _iter_folder_uris(folders) -> list[str]:
+    """pygls 2.x: workspace.folders — dict {uri: WorkspaceFolder}."""
+    if not folders:
+        return []
+    return list(folders.keys()) if isinstance(folders, dict) else [f.uri for f in folders]
+
+
+def _get_workspace_roots(ls: LanguageServer) -> list[Path]:
+    """Вернуть workspace-корни как список существующих Path.
+
+    Используется для того, чтобы кросс-файловый резолв импортов не ушёл
+    за пределы открытого проекта (защита от `../../../etc/passwd`-импортов).
+    """
+    roots: list[Path] = []
+    for folder_uri in _iter_folder_uris(ls.workspace.folders):
+        root = _folder_uri_to_path(folder_uri)
+        if root.exists():
+            roots.append(root)
+    return roots
 
 
 # ── Обработчики LSP ────────────────────────────────────────────────────────
@@ -112,7 +137,7 @@ def initialized(ls: LanguageServer, params: types.InitializedParams):
 def did_open(ls: LanguageServer, params: types.DidOpenTextDocumentParams):
     # Сейчас только логируем. В будущем — триггер для индексации файла
     # (нужно для Go to Definition и Find References через project indexer)
-    logger.info(f"Открыт: {params.text_document.uri}")
+    logger.debug(f"Открыт: {params.text_document.uri}")
 
 
 @server.feature(types.TEXT_DOCUMENT_DOCUMENT_SYMBOL)
@@ -125,7 +150,7 @@ def document_symbol(
     lang = get_language(uri)
 
     if lang is None:
-        logger.info(f"Язык не поддерживается: {uri}")
+        logger.debug(f"Язык не поддерживается: {uri}")
         return []
 
     try:
@@ -135,7 +160,7 @@ def document_symbol(
         logger.exception(f"Outline: failed on {uri}: {e}")
         return []
 
-    logger.info(f"Outline: найдено {len(symbols)} символов в {uri}")
+    logger.debug(f"Outline: найдено {len(symbols)} символов в {uri}")
     return symbols
 
 
@@ -159,23 +184,26 @@ def definition(
         return None
 
     if result:
-        logger.info(f"Definition: найдено в {uri}:{result.start.line + 1}")
+        logger.debug(f"Definition: найдено в {uri}:{result.start.line + 1}")
         return types.Location(uri=uri, range=result)
 
-    # Cross-file: ищем определение через import-tracking
+    # Cross-file: ищем определение через import-tracking.
+    # workspace_roots нужны, чтобы резолвер не смог выйти за границы
+    # проекта через крафтнутые `../../../etc/passwd`-импорты.
     try:
         doc = ls.workspace.get_text_document(uri)
         cross = lang.find_cross_file_definition(
             doc.source, params.position.line, params.position.character,
             uri, LANGUAGE_MAP,
+            workspace_roots=_get_workspace_roots(ls),
         )
         if cross:
-            logger.info(f"Definition: cross-file → {cross.uri}:{cross.range.start.line + 1}")
+            logger.debug(f"Definition: cross-file → {cross.uri}:{cross.range.start.line + 1}")
             return cross
     except Exception as e:
         logger.exception(f"Definition: cross-file failed on {uri}: {e}")
 
-    logger.info(f"Definition: не найдено для позиции {params.position.line}:{params.position.character}")
+    logger.debug(f"Definition: не найдено для позиции {params.position.line}:{params.position.character}")
     return None
 
 
@@ -201,7 +229,7 @@ def references(
         logger.exception(f"References: failed on {uri}: {e}")
         return []
 
-    logger.info(f"References: найдено {len(ranges)} в {uri}")
+    logger.debug(f"References: найдено {len(ranges)} в {uri}")
     return [types.Location(uri=uri, range=r) for r in ranges]
 
 
@@ -225,7 +253,7 @@ def hover(
         return None
 
     if result:
-        logger.info(f"Hover: {uri}:{params.position.line + 1}")
+        logger.debug(f"Hover: {uri}:{params.position.line + 1}")
     return result
 
 
@@ -255,7 +283,7 @@ def code_lens(
 
     lenses: list[types.CodeLens] = []
     _collect_code_lenses(symbols, ident_counts, uri, lenses)
-    logger.info(f"CodeLens: {len(lenses)} lenses in {uri}")
+    logger.debug(f"CodeLens: {len(lenses)} lenses in {uri}")
     return lenses
 
 
@@ -315,14 +343,8 @@ def _flatten_symbols(
 def _scan_workspace_files(folders) -> list[Path]:
     """Найти все файлы с поддерживаемыми расширениями в workspace."""
     files = []
-    # pygls 2.x: folders — dict {uri_string: WorkspaceFolder}
-    uris = folders.keys() if isinstance(folders, dict) else [f.uri for f in folders]
-    for folder_uri in uris:
-        folder_path = unquote(urlparse(folder_uri).path)
-        # На Windows путь может начинаться с /C:/... — убираем лишний /
-        if os.name == "nt" and folder_path.startswith("/"):
-            folder_path = folder_path[1:]
-        root = Path(folder_path)
+    for folder_uri in _iter_folder_uris(folders):
+        root = _folder_uri_to_path(folder_uri)
         if not root.exists():
             continue
         for path in root.rglob("*"):
@@ -423,7 +445,7 @@ def _validate_uri_arg(args: tuple) -> str | None:
 @server.command("ide-navigator.references")
 def references_command(ls: LanguageServer, *args):
     """Вернуть референсы + сниппеты для кастомной WebView-панели."""
-    logger.info(f"References command, args={args}")
+    logger.debug(f"References command, args={args}")
 
     validated = _validate_position_args(args)
     if validated is None:
@@ -444,7 +466,7 @@ def references_command(ls: LanguageServer, *args):
 
     if result:
         result["uri"] = uri
-        logger.info(f"References panel: {len(result['refs'])} in {uri}")
+        logger.debug(f"References panel: {len(result['refs'])} in {uri}")
     return result
 
 
@@ -453,7 +475,7 @@ def references_command(ls: LanguageServer, *args):
 @server.command("ide-navigator.callGraph")
 def call_graph_command(ls: LanguageServer, *args):
     """Вернуть граф вызовов для файла."""
-    logger.info(f"Call graph command, args={args}")
+    logger.debug(f"Call graph command, args={args}")
     empty = {"nodes": [], "edges": []}
 
     uri = _validate_uri_arg(args)
@@ -472,7 +494,7 @@ def call_graph_command(ls: LanguageServer, *args):
         logger.exception(f"Call graph: failed on {uri}: {e}")
         return empty
 
-    logger.info(f"Call graph: {len(result['nodes'])} nodes, {len(result['edges'])} edges in {uri}")
+    logger.debug(f"Call graph: {len(result['nodes'])} nodes, {len(result['edges'])} edges in {uri}")
     return result
 
 
