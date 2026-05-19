@@ -47,7 +47,7 @@ class HoverMixin:
             )
             if func_node is not None:
                 cc = self._compute_complexity(func_node)
-                complexity_str = f" · complexity {cc}"
+                complexity_str = f" · cyclomatic {cc}"
 
         md = (
             f"```{self.LANGUAGE_ID}\n"

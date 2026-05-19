@@ -85,7 +85,7 @@ def test_python_hover_complexity_toplevel():
     hover = lang.get_hover(src, 7, 2)
     assert hover is not None
     md = hover.contents.value
-    assert "complexity 3" in md
+    assert "cyclomatic 3" in md
 
 def test_python_hover_complexity_method():
     src = (
@@ -103,4 +103,4 @@ def test_python_hover_complexity_method():
     hover = lang.get_hover(src, 1, 10)
     assert hover is not None
     md = hover.contents.value
-    assert "complexity 3" in md
+    assert "cyclomatic 3" in md
