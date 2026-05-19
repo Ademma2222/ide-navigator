@@ -3,12 +3,7 @@ import tree_sitter_typescript as tsts
 from lsprotocol import types
 from .javascript_lang import JavaScriptLanguage
 
-
 class TypeScriptLanguage(JavaScriptLanguage):
-    """
-    TypeScript парсер — расширяет JavaScript + добавляет interface, type, enum.
-    JS-узлы обрабатываются через super(), TS-специфичные — здесь.
-    """
 
     LANGUAGE_ID = "typescript"
 
@@ -16,10 +11,8 @@ class TypeScriptLanguage(JavaScriptLanguage):
         return Parser(Language(tsts.language_typescript()))
 
     def _extract_symbols(self, node, inside_class: bool = False) -> list[types.DocumentSymbol]:
-        # Сначала все JS-символы (классы, функции, методы, переменные)
         symbols = super()._extract_symbols(node, inside_class)
 
-        # Добавляем TS-специфичные узлы
         for child in node.children:
 
             if child.type == "interface_declaration":

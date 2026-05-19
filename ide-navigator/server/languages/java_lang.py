@@ -3,7 +3,6 @@ import tree_sitter_java as tsjava
 from lsprotocol import types
 from .base import BaseLanguage
 
-
 class JavaLanguage(BaseLanguage):
 
     LANGUAGE_ID = "java"

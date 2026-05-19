@@ -1,15 +1,9 @@
-// Call Graph webview logic.
-// Данные приходят от расширения через postMessage({command:'init', data})
-// и постэкспиратно через {command:'refresh', data} (live-refresh при изменении файла).
-// Никакого inline-JSON, никакого 'unsafe-inline' — postMessage сериализует
-// через structured clone, так что XSS-вектор через имена символов исчезает.
 
 (function () {
     'use strict';
 
     const vscode = acquireVsCodeApi();
 
-    /* ── Цвета по типу символа ── */
     const TYPE_COLORS = {
         'function':    { bg: '#7f6df2', border: '#9b8afb', glow: 'rgba(127,109,242,0.35)' },
         'method':      { bg: '#4aadff', border: '#6bc0ff', glow: 'rgba(74,173,255,0.35)' },
@@ -21,7 +15,6 @@
     const DEFAULT_COLOR = TYPE_COLORS.function;
     const NON_CALLABLE_TYPES = new Set(['class', 'interface', 'struct']);
 
-    /* ── Данные графа (перезаполняются при init/refresh) ── */
     let raw = { nodes: [], edges: [] };
     const nodeById = {};
     const classToMethods = {};
@@ -59,7 +52,6 @@
         return classToMethods[clsId] ? classToMethods[clsId].size : 0;
     }
 
-    /* ── Состояние тулбара ── */
     const state = {
         search: '',
         groupByClass: false,
@@ -70,21 +62,6 @@
         selectedNode: null,
     };
 
-    /* История выделений для back/forward — как в браузере. */
-    const history = { back: [], forward: [] };
-    function historyPush(nodeId) {
-        if (nodeId == null) return;
-        if (history.back.length && history.back[history.back.length - 1] === nodeId) return;
-        history.back.push(nodeId);
-        history.forward.length = 0;
-        updateHistoryButtons();
-    }
-    function updateHistoryButtons() {
-        document.getElementById('historyBack').disabled = history.back.length < 2;
-        document.getElementById('historyFwd').disabled  = history.forward.length === 0;
-    }
-
-    /* ── Dead-code: узлы без входящих call-рёбер ── */
     function computeUnused(nodes, edges) {
         const incoming = {};
         nodes.forEach(n => { incoming[n.id] = 0; });
@@ -100,8 +77,6 @@
         return unused;
     }
 
-    /* ── Tarjan SCC: рёбра, оба конца которых лежат в одном SCC размером ≥ 2
-       (или self-loop) — "cycle edges". Итеративный, чтобы не взорвать стек. */
     function computeCycleEdges(nodes, edges) {
         const callEdges = edges.filter(e => e.kind === 'call');
         const adj = {};
@@ -172,7 +147,6 @@
         return cycleKeys;
     }
 
-    /* ── Пайплайн фильтрации: raw → processed nodes/edges ── */
     function buildGraph() {
         let nodes = raw.nodes.slice();
         let edges = raw.edges.map(e => ({ from: e.from, to: e.to, kind: e.kind }));
@@ -200,7 +174,6 @@
         return { nodes, edges };
     }
 
-    /* ── Сборка vis.DataSet из отфильтрованных nodes/edges ── */
     function buildDataSets() {
         const built = buildGraph();
         const nodes = built.nodes;
@@ -336,7 +309,6 @@
         setTimeout(() => network.setOptions({ physics: { enabled: false } }), 1200);
     }
 
-    /* ── Export ── */
     function buildMermaid() {
         const lines = ['graph LR'];
         const safeId = {};
@@ -382,7 +354,7 @@
         minX -= pad; minY -= pad; maxX += pad; maxY += pad;
         const w = Math.max(1, maxX - minX), h = Math.max(1, maxY - minY);
         const parts = [
-            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="' + minX + ' ' + minY + ' ' + w + ' ' + h + '" width="' + Math.round(w) + '" height="' + Math.round(h) + '">',
+            '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '" viewBox="' + minX + ' ' + minY + ' ' + w + ' ' + h + '">',
             '<rect x="' + minX + '" y="' + minY + '" width="' + w + '" height="' + h + '" fill="#191919"/>',
             '<defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#888"/></marker></defs>'
         ];
@@ -411,7 +383,6 @@
         return canvas.toDataURL('image/png');
     }
 
-    /* ── Инициализация vis.Network (вызывается после первого init-сообщения) ── */
     function initNetwork() {
         if (raw.nodes.length === 0) {
             showEmpty();
@@ -467,7 +438,6 @@
             }
             const nodeId = params.nodes[0];
             state.selectedNode = nodeId;
-            historyPush(nodeId);
             const src = params.event && params.event.srcEvent;
             const withMod = src && (src.ctrlKey || src.metaKey || src.shiftKey || src.altKey);
             if (withMod) {
@@ -480,7 +450,6 @@
             }
         });
 
-        /* ── Обработчики тулбара ── */
         const searchEl = document.getElementById('search');
         let searchTimer = null;
         searchEl.addEventListener('input', () => {
@@ -515,38 +484,6 @@
             rerender();
         });
 
-        /* ── История back/forward ── */
-        function focusFromHistory(nodeId) {
-            state.selectedNode = nodeId;
-            network.selectNodes([nodeId], false);
-            try { network.focus(nodeId, { scale: 1.1, animation: { duration: 300, easingFunction: 'easeInOutQuad' } }); } catch (_) {}
-            updateHistoryButtons();
-        }
-        document.getElementById('historyBack').addEventListener('click', () => {
-            if (history.back.length < 2) return;
-            const cur = history.back.pop();
-            history.forward.push(cur);
-            const prev = history.back[history.back.length - 1];
-            focusFromHistory(prev);
-        });
-        document.getElementById('historyFwd').addEventListener('click', () => {
-            if (history.forward.length === 0) return;
-            const next = history.forward.pop();
-            history.back.push(next);
-            focusFromHistory(next);
-        });
-        document.addEventListener('keydown', (ev) => {
-            if (!ev.altKey) return;
-            if (ev.key === 'ArrowLeft') {
-                ev.preventDefault();
-                document.getElementById('historyBack').click();
-            } else if (ev.key === 'ArrowRight') {
-                ev.preventDefault();
-                document.getElementById('historyFwd').click();
-            }
-        });
-
-        /* ── Export ── */
         document.getElementById('exportFmt').addEventListener('change', (ev) => {
             const fmt = ev.target.value;
             ev.target.value = '';
@@ -563,9 +500,9 @@
             vscode.postMessage({ command: 'exportGraph', payload: payload });
         });
 
-        /* ── Легенда ── */
         const usedTypes = new Set(raw.nodes.map(n => n.type));
         const legendEl = document.getElementById('legend');
+        legendEl.replaceChildren();
         const typeLabels = {
             'function': 'Function', 'method': 'Method', 'constructor': 'Constructor',
             'class': 'Class', 'interface': 'Interface', 'struct': 'Struct'
@@ -591,7 +528,6 @@
         });
     }
 
-    /* ── Протокол сообщений host → webview ── */
     window.addEventListener('message', (event) => {
         const msg = event.data;
         if (!msg) return;
@@ -610,7 +546,5 @@
         }
     });
 
-    /* Host queues messages before webview script runs, но на всякий случай
-       сигналим о готовности — extension может сам дождаться и прислать init. */
     vscode.postMessage({ command: 'ready' });
 })();

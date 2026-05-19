@@ -7,9 +7,6 @@ from urllib.parse import urlparse, unquote
 from pygls.lsp.server import LanguageServer
 from lsprotocol import types
 
-# Windows: stderr по умолчанию использует консольную кодировку (cp1251 для RU),
-# а VS Code читает LSP-канал как UTF-8 → кириллица превращается в ��.
-# reconfigure должен идти ДО basicConfig, чтобы StreamHandler подхватил новый поток.
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
@@ -29,7 +26,6 @@ from languages.typescript_lang import TypeScriptLanguage
 
 server = LanguageServer("ide-navigator", "v0.1")
 
-# ── Реестр языков: расширение файла → языковой модуль ─────────────────────
 LANGUAGE_MAP = {
     ".py":    PythonLanguage(),
     ".java":  JavaLanguage(),
@@ -44,48 +40,29 @@ LANGUAGE_MAP = {
     ".tsx":   TypeScriptLanguage(),
 }
 
-
 def get_language(uri: str):
-    """Определить язык по URI файла."""
     path = urlparse(uri).path
     ext = os.path.splitext(path)[1].lower()
     return LANGUAGE_MAP.get(ext)
 
-
 def _folder_uri_to_path(folder_uri: str) -> Path:
-    """Конвертировать workspace-folder URI (`file:///C:/foo`) в `Path`.
-
-    На Windows путь из urlparse() начинается с `/C:/...` — лишний `/`
-    нужно срезать, иначе `Path(...)` получится относительным.
-    """
     folder_path = unquote(urlparse(folder_uri).path)
     if os.name == "nt" and folder_path.startswith("/"):
         folder_path = folder_path[1:]
     return Path(folder_path)
 
-
 def _iter_folder_uris(folders) -> list[str]:
-    """pygls 2.x: workspace.folders — dict {uri: WorkspaceFolder}."""
     if not folders:
         return []
     return list(folders.keys()) if isinstance(folders, dict) else [f.uri for f in folders]
 
-
 def _get_workspace_roots(ls: LanguageServer) -> list[Path]:
-    """Вернуть workspace-корни как список существующих Path.
-
-    Используется для того, чтобы кросс-файловый резолв импортов не ушёл
-    за пределы открытого проекта (защита от `../../../etc/passwd`-импортов).
-    """
     roots: list[Path] = []
     for folder_uri in _iter_folder_uris(ls.workspace.folders):
         root = _folder_uri_to_path(folder_uri)
         if root.exists():
             roots.append(root)
     return roots
-
-
-# ── Обработчики LSP ────────────────────────────────────────────────────────
 
 _LOG_LEVELS = {
     "debug": logging.DEBUG,
@@ -94,9 +71,7 @@ _LOG_LEVELS = {
     "error": logging.ERROR,
 }
 
-
 def _apply_settings(opts: dict) -> None:
-    """Применить настройки из initializationOptions клиента."""
     if not isinstance(opts, dict):
         return
 
@@ -114,38 +89,25 @@ def _apply_settings(opts: dict) -> None:
         BaseLanguage._PARSE_CACHE_MAX = cache_size
         logger.info(f"Parse cache size set to {cache_size}")
 
-
 @server.feature(types.INITIALIZE)
 def on_initialize(ls: LanguageServer, params: types.InitializeParams):
-    """Читаем initializationOptions напрямую из initialize-запроса.
-
-    pygls 2.x даёт встроиться в свой lsp_initialize через user_handler:
-    наши настройки успевают примениться до того, как сервер начнёт
-    отвечать на textDocument/*-запросы.
-    """
     opts = params.initialization_options
     if isinstance(opts, dict):
         _apply_settings(opts)
-
 
 @server.feature(types.INITIALIZED)
 def initialized(ls: LanguageServer, params: types.InitializedParams):
     logger.info("IDE Navigator server ready")
 
-
 @server.feature(types.TEXT_DOCUMENT_DID_OPEN)
 def did_open(ls: LanguageServer, params: types.DidOpenTextDocumentParams):
-    # Сейчас только логируем. В будущем — триггер для индексации файла
-    # (нужно для Go to Definition и Find References через project indexer)
     logger.debug(f"Открыт: {params.text_document.uri}")
-
 
 @server.feature(types.TEXT_DOCUMENT_DOCUMENT_SYMBOL)
 def document_symbol(
     ls: LanguageServer,
     params: types.DocumentSymbolParams,
 ) -> list[types.DocumentSymbol]:
-    """Document Outline — структура файла в боковой панели VS Code."""
     uri = params.text_document.uri
     lang = get_language(uri)
 
@@ -163,13 +125,11 @@ def document_symbol(
     logger.debug(f"Outline: найдено {len(symbols)} символов в {uri}")
     return symbols
 
-
 @server.feature(types.TEXT_DOCUMENT_DEFINITION)
 def definition(
     ls: LanguageServer,
     params: types.DefinitionParams,
 ) -> types.Location | None:
-    """Go to Definition — Ctrl+Click прыжок к определению символа."""
     uri = params.text_document.uri
     lang = get_language(uri)
 
@@ -187,9 +147,6 @@ def definition(
         logger.debug(f"Definition: найдено в {uri}:{result.start.line + 1}")
         return types.Location(uri=uri, range=result)
 
-    # Cross-file: ищем определение через import-tracking.
-    # workspace_roots нужны, чтобы резолвер не смог выйти за границы
-    # проекта через крафтнутые `../../../etc/passwd`-импорты.
     try:
         doc = ls.workspace.get_text_document(uri)
         cross = lang.find_cross_file_definition(
@@ -206,13 +163,11 @@ def definition(
     logger.debug(f"Definition: не найдено для позиции {params.position.line}:{params.position.character}")
     return None
 
-
 @server.feature(types.TEXT_DOCUMENT_REFERENCES)
 def references(
     ls: LanguageServer,
     params: types.ReferenceParams,
 ) -> list[types.Location]:
-    """Find All References — все вхождения символа в файле."""
     uri = params.text_document.uri
     lang = get_language(uri)
 
@@ -232,13 +187,11 @@ def references(
     logger.debug(f"References: найдено {len(ranges)} в {uri}")
     return [types.Location(uri=uri, range=r) for r in ranges]
 
-
 @server.feature(types.TEXT_DOCUMENT_HOVER)
 def hover(
     ls: LanguageServer,
     params: types.HoverParams,
 ) -> types.Hover | None:
-    """Hover Info — информация о символе при наведении курсора."""
     uri = params.text_document.uri
     lang = get_language(uri)
 
@@ -256,15 +209,11 @@ def hover(
         logger.debug(f"Hover: {uri}:{params.position.line + 1}")
     return result
 
-
-# ── CodeLens (reference counts) ──────────────────────────────────────────
-
 @server.feature(types.TEXT_DOCUMENT_CODE_LENS)
 def code_lens(
     ls: LanguageServer,
     params: types.CodeLensParams,
 ) -> list[types.CodeLens]:
-    """CodeLens — показать количество ссылок над каждой функцией/классом."""
     uri = params.text_document.uri
     lang = get_language(uri)
 
@@ -275,7 +224,6 @@ def code_lens(
         doc = ls.workspace.get_text_document(uri)
         source = doc.source
         symbols = lang.get_symbols(source, uri)
-        # Один проход по AST вместо N полных обходов find_references.
         ident_counts = lang.count_identifiers_by_name(source, uri)
     except Exception as e:
         logger.exception(f"CodeLens: failed on {uri}: {e}")
@@ -286,21 +234,15 @@ def code_lens(
     logger.debug(f"CodeLens: {len(lenses)} lenses in {uri}")
     return lenses
 
-
 def _collect_code_lenses(
     symbols: list[types.DocumentSymbol],
     ident_counts: dict[str, int],
     uri: str,
     result: list[types.CodeLens],
 ) -> None:
-    """Рекурсивно собрать CodeLens. Ссылки = количество идентификаторов минус сам декларатор."""
     for s in symbols:
         line = s.selection_range.start.line
         character = s.selection_range.start.character
-        # Общее число вхождений имени минус 1 (само определение).
-        # Для перегруженных имён (несколько функций с одним именем) это
-        # приближение завышает счётчик на число одноимённых определений —
-        # приемлемая цена за 10-100× ускорение на больших файлах.
         total = ident_counts.get(s.name, 0)
         count = max(0, total - 1)
         title = f"{count} reference{'s' if count != 1 else ''}"
@@ -317,16 +259,11 @@ def _collect_code_lenses(
         if s.children:
             _collect_code_lenses(s.children, ident_counts, uri, result)
 
-
-# ── Workspace Symbols ─────────────────────────────────────────────────────
-
 SUPPORTED_EXTENSIONS = set(LANGUAGE_MAP.keys())
-
 
 def _flatten_symbols(
     symbols: list[types.DocumentSymbol], uri: str, container: str = "",
 ) -> list[types.SymbolInformation]:
-    """Превратить дерево DocumentSymbol в плоский список SymbolInformation."""
     result = []
     for s in symbols:
         result.append(types.SymbolInformation(
@@ -339,9 +276,7 @@ def _flatten_symbols(
             result.extend(_flatten_symbols(s.children, uri, container=s.name))
     return result
 
-
 def _scan_workspace_files(folders) -> list[Path]:
-    """Найти все файлы с поддерживаемыми расширениями в workspace."""
     files = []
     for folder_uri in _iter_folder_uris(folders):
         root = _folder_uri_to_path(folder_uri)
@@ -349,20 +284,17 @@ def _scan_workspace_files(folders) -> list[Path]:
             continue
         for path in root.rglob("*"):
             if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS:
-                # Пропускаем venv, node_modules и скрытые папки
                 parts = path.relative_to(root).parts
                 if any(p.startswith(".") or p in ("venv", "node_modules", "__pycache__") for p in parts):
                     continue
                 files.append(path)
     return files
 
-
 @server.feature(types.WORKSPACE_SYMBOL)
 def workspace_symbol(
     ls: LanguageServer,
     params: types.WorkspaceSymbolParams,
 ) -> list[types.SymbolInformation]:
-    """Workspace Symbols — Ctrl+T поиск символа по всем файлам проекта."""
     query = params.query.lower()
     all_symbols: list[types.SymbolInformation] = []
 
@@ -390,31 +322,18 @@ def workspace_symbol(
         uri = path.as_uri()
         all_symbols.extend(_flatten_symbols(symbols, uri))
 
-    # Фильтруем по запросу (пустой запрос = все символы)
     if query:
         all_symbols = [s for s in all_symbols if query in s.name.lower()]
 
     logger.info(f"Workspace symbols: {len(all_symbols)} matches for '{params.query}'")
     return all_symbols
 
-
-# ── Валидация аргументов кастомных команд ────────────────────────────
-
 def _unwrap_args(args: tuple) -> list:
-    """
-    pygls 2.x может прислать команду как позиционные *args или как один
-    список в args[0]. Нормализуем к плоскому списку.
-    """
     if len(args) == 1 and isinstance(args[0], (list, tuple)):
         return list(args[0])
     return list(args)
 
-
 def _validate_position_args(args: tuple) -> tuple[str, int, int, bool] | None:
-    """
-    Проверить что args = (uri: str, line: int, character: int, [include_decl: bool]).
-    Возвращает нормализованный кортеж или None при любой ошибке.
-    """
     flat = _unwrap_args(args)
     if len(flat) < 3:
         return None
@@ -428,9 +347,7 @@ def _validate_position_args(args: tuple) -> tuple[str, int, int, bool] | None:
         include_decl = bool(include_decl)
     return uri, line, character, include_decl
 
-
 def _validate_uri_arg(args: tuple) -> str | None:
-    """Проверить что первый аргумент — непустая строка (URI)."""
     flat = _unwrap_args(args)
     if not flat:
         return None
@@ -439,12 +356,8 @@ def _validate_uri_arg(args: tuple) -> str | None:
         return None
     return uri
 
-
-# ── References panel (custom command) ────────────────────────────────
-
 @server.command("ide-navigator.references")
 def references_command(ls: LanguageServer, *args):
-    """Вернуть референсы + сниппеты для кастомной WebView-панели."""
     logger.debug(f"References command, args={args}")
 
     validated = _validate_position_args(args)
@@ -469,12 +382,8 @@ def references_command(ls: LanguageServer, *args):
         logger.debug(f"References panel: {len(result['refs'])} in {uri}")
     return result
 
-
-# ── Call Graph (custom command) ───────────────────────────────────────
-
 @server.command("ide-navigator.callGraph")
 def call_graph_command(ls: LanguageServer, *args):
-    """Вернуть граф вызовов для файла."""
     logger.debug(f"Call graph command, args={args}")
     empty = {"nodes": [], "edges": []}
 
@@ -496,7 +405,6 @@ def call_graph_command(ls: LanguageServer, *args):
 
     logger.debug(f"Call graph: {len(result['nodes'])} nodes, {len(result['edges'])} edges in {uri}")
     return result
-
 
 if __name__ == "__main__":
     server.start_io()

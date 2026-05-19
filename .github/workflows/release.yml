@@ -1,13 +1,7 @@
 name: Release
 
-# Build the PyInstaller server binary on Windows + macOS (Apple Silicon),
-# package a platform-specific .vsix for each target, and (on tag push) publish
-# a GitHub Release with the .vsix files attached.
-#
-# Note: Intel Mac (darwin-x64) is not built — GitHub retired the macos-13
-# runners in December 2025. Apple Silicon covers all Macs sold since 2020.
-#
-# No secrets required — uses the built-in GITHUB_TOKEN for release creation.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 on:
   push:
@@ -61,7 +55,7 @@ jobs:
       - name: Build server binary
         run: pyinstaller server.spec --clean --noconfirm
 
-      - name: Archive build output (preserves Unix exec bits)
+      - name: Archive build output
         shell: bash
         run: |
           cd dist
@@ -113,10 +107,6 @@ jobs:
 
       - name: Package .vsix
         working-directory: ide-navigator/extension
-        # Pin to vsce 2.x: the 3.x secret scanner crashes on PyInstaller-built
-        # Mach-O binaries (exits with "Error occurred while scanning secrets"
-        # even with --allow-package-all-secrets, since the scanner itself
-        # errors out before the allowlist is consulted). 2.x has no scanner.
         run: npx @vscode/vsce@^2.32.0 package --target ${{ matrix.target }} --skip-license
 
       - name: Upload .vsix artifact

@@ -1,14 +1,8 @@
-"""
-Unit tests for Hover Info.
-Проверяем что `get_hover()` возвращает Markdown с подсветкой синтаксиса,
-kind label и номером строки определения.
-"""
 from lsprotocol import types
 
 from languages.python_lang import PythonLanguage
 from languages.go_lang import GoLanguage
 from languages.typescript_lang import TypeScriptLanguage
-
 
 def test_python_hover_on_function():
     src = (
@@ -19,7 +13,6 @@ def test_python_hover_on_function():
         "    y = compute(5)\n"
     )
     lang = PythonLanguage()
-    # Курсор на "compute" в вызове (строка 4)
     hover = lang.get_hover(src, 4, 10)
 
     assert hover is not None
@@ -32,7 +25,6 @@ def test_python_hover_on_function():
     assert "**function**" in md
     assert "line 1" in md
 
-
 def test_python_hover_on_class():
     src = (
         "class Widget:\n"
@@ -41,7 +33,6 @@ def test_python_hover_on_class():
         "w = Widget()\n"
     )
     lang = PythonLanguage()
-    # Курсор на Widget в строке 3
     hover = lang.get_hover(src, 3, 5)
 
     assert hover is not None
@@ -49,13 +40,11 @@ def test_python_hover_on_class():
     assert "**class**" in md
     assert "line 1" in md
 
-
 def test_python_hover_not_identifier():
     src = "x = 1 + 2\n"
     lang = PythonLanguage()
-    hover = lang.get_hover(src, 0, 6)  # на "+"
+    hover = lang.get_hover(src, 0, 6)
     assert hover is None
-
 
 def test_go_hover_language_id():
     src = (
@@ -66,10 +55,9 @@ def test_go_hover_language_id():
         "func main() { greet() }\n"
     )
     lang = GoLanguage()
-    hover = lang.get_hover(src, 4, 14)  # на greet()
+    hover = lang.get_hover(src, 4, 14)
     assert hover is not None
     assert "```go" in hover.contents.value
-
 
 def test_typescript_hover_language_id():
     src = (
@@ -78,13 +66,11 @@ def test_typescript_hover_language_id():
         "const x = compute();\n"
     )
     lang = TypeScriptLanguage()
-    hover = lang.get_hover(src, 2, 11)  # на compute()
+    hover = lang.get_hover(src, 2, 11)
     assert hover is not None
     assert "```typescript" in hover.contents.value
 
-
 def test_python_hover_complexity_toplevel():
-    """Complexity отображается для top-level функций."""
     src = (
         "def branching(x):\n"
         "    if x > 0:\n"
@@ -96,14 +82,12 @@ def test_python_hover_complexity_toplevel():
         "branching(1)\n"
     )
     lang = PythonLanguage()
-    hover = lang.get_hover(src, 7, 2)  # на вызове branching
+    hover = lang.get_hover(src, 7, 2)
     assert hover is not None
     md = hover.contents.value
     assert "complexity 3" in md
 
-
 def test_python_hover_complexity_method():
-    """Complexity отображается для методов класса (FQN lookup)."""
     src = (
         "class Service:\n"
         "    def process(self, items):\n"
@@ -116,9 +100,7 @@ def test_python_hover_complexity_method():
         "s.process([])\n"
     )
     lang = PythonLanguage()
-    # Наведение на "process" в определении (строка 1)
     hover = lang.get_hover(src, 1, 10)
     assert hover is not None
     md = hover.contents.value
-    # for + if = 2 branch points → complexity 3
     assert "complexity 3" in md

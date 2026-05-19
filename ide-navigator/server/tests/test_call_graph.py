@@ -1,12 +1,6 @@
-"""
-Unit tests for Call Graph.
-Проверяем что `get_call_graph()` возвращает корректные nodes/edges
-и что санитизация ограничивает длину label / whitelist типов.
-"""
 from languages.python_lang import PythonLanguage
 from languages.java_lang import JavaLanguage
 from languages.base import BaseLanguage
-
 
 def test_python_call_graph_basic():
     src = (
@@ -27,12 +21,10 @@ def test_python_call_graph_basic():
     assert "mid" in labels
     assert "top" in labels
 
-    # Рёбра вызовов: kind="call" (id = FQN, для top-level функций совпадает с именем)
     call_pairs = {(e["from"], e["to"]) for e in graph["edges"] if e["kind"] == "call"}
     assert ("mid", "leaf") in call_pairs
     assert ("top", "mid") in call_pairs
     assert ("top", "leaf") in call_pairs
-
 
 def test_python_call_graph_class_containment():
     src = (
@@ -50,18 +42,14 @@ def test_python_call_graph_class_containment():
     assert "start" in labels
     assert "init" in labels
 
-    # Класс → методы помечены kind="contains" (FQN в edges)
     contain_pairs = {(e["from"], e["to"]) for e in graph["edges"] if e["kind"] == "contains"}
     assert ("Service", "Service.start") in contain_pairs
     assert ("Service", "Service.init") in contain_pairs
 
-    # start() → init() — это вызов, не containment (FQN)
     call_pairs = {(e["from"], e["to"]) for e in graph["edges"] if e["kind"] == "call"}
     assert ("Service.start", "Service.init") in call_pairs
 
-
 def test_python_call_graph_node_locations():
-    """Каждый узел должен нести координаты идентификатора для клик-навигации."""
     src = (
         "def leaf():\n"
         "    return 1\n"
@@ -80,18 +68,11 @@ def test_python_call_graph_node_locations():
             assert field in node, f"{name} missing {field}"
         assert isinstance(node["line"], int) and node["line"] >= 0
 
-    # leaf объявлен на строке 0, Box — на строке 3, open — на строке 4
     assert by_name["leaf"]["line"] == 0
     assert by_name["Box"]["line"] == 3
     assert by_name["open"]["line"] == 4
 
-
 def test_python_call_graph_decorated_methods():
-    """
-    @property / @staticmethod / любые декораторы в tree-sitter-python
-    оборачиваются в decorated_definition. Без явной рекурсии мы теряли
-    декорированные методы и из Outline, и из Call Graph.
-    """
     src = (
         "class StateMachine:\n"
         "    def __init__(self):\n"
@@ -118,13 +99,7 @@ def test_python_call_graph_decorated_methods():
     assert ("StateMachine", "StateMachine.current_state") in contain_pairs
     assert ("StateMachine", "StateMachine.factory") in contain_pairs
 
-
 def test_python_call_graph_cyclomatic_complexity():
-    """
-    Цикломатическая сложность по McCabe: 1 + число branch points.
-    Считаем структурные узлы AST (if_statement, for_statement, except_clause,
-    case_clause, ternary, etc.) — else_clause и сам try не добавляют путь.
-    """
     src = (
         "def trivial():\n"
         "    return 1\n"
@@ -156,14 +131,10 @@ def test_python_call_graph_cyclomatic_complexity():
     by_name = {n["label"]: n for n in graph["nodes"]}
 
     assert by_name["trivial"]["complexity"] == 1
-    # if + elif (else не считается)
     assert by_name["branching"]["complexity"] == 3
-    # for + if + except + while
     assert by_name["loopy"]["complexity"] == 5
 
-
 def test_java_call_graph_cyclomatic_complexity():
-    """Java switch считается по cases, сам switch_expression не добавляет путь."""
     src = (
         "class App {\n"
         "    int simple() { return 1; }\n"
@@ -182,16 +153,12 @@ def test_java_call_graph_cyclomatic_complexity():
         "}\n"
     )
     graph = JavaLanguage().get_call_graph(src)
-    # FQN: App.simple, App.complex — ищем по id
     by_id = {n["id"]: n for n in graph["nodes"]}
 
     assert by_id["App.simple"]["complexity"] == 1
-    # if + for + 3 cases (0, 1, default)
     assert by_id["App.complex"]["complexity"] == 6
 
-
 def test_python_call_graph_edge_kinds():
-    """Каждое ребро должно иметь kind ∈ {call, contains}."""
     src = (
         "class A:\n"
         "    def a(self):\n"
@@ -206,19 +173,12 @@ def test_python_call_graph_edge_kinds():
     for edge in graph["edges"]:
         assert edge["kind"] in allowed_kinds, f"bad edge kind: {edge}"
 
-
 def test_call_graph_empty_source():
     lang = PythonLanguage()
     graph = lang.get_call_graph("")
     assert graph == {"nodes": [], "edges": []}
 
-
 def test_call_graph_type_whitelist():
-    """
-    Тип каждого узла должен быть из белого списка.
-    Это гарантирует безопасность WebView — никакие неожиданные значения
-    из tree-sitter не попадут в HTML клиента.
-    """
     src = "def foo(): pass\nclass Bar: pass\n"
     lang = PythonLanguage()
     graph = lang.get_call_graph(src)
@@ -227,10 +187,7 @@ def test_call_graph_type_whitelist():
     for node in graph["nodes"]:
         assert node["type"] in allowed, f"unexpected type: {node['type']!r}"
 
-
 def test_call_graph_label_length_limit():
-    """Имена длиннее лимита должны быть обрезаны."""
-    # Генерим файл с функцией, имя которой длиннее лимита
     long_name = "x" * (BaseLanguage._GRAPH_MAX_LABEL_LEN + 50)
     src = f"def {long_name}(): pass\n"
     lang = PythonLanguage()
@@ -238,7 +195,6 @@ def test_call_graph_label_length_limit():
 
     for node in graph["nodes"]:
         assert len(node["label"]) <= BaseLanguage._GRAPH_MAX_LABEL_LEN
-
 
 def test_java_call_graph():
     src = (
@@ -255,6 +211,5 @@ def test_java_call_graph():
     assert "compute" in labels
     assert "run" in labels
 
-    # FQN edges
     edge_pairs = {(e["from"], e["to"]) for e in graph["edges"]}
     assert ("App.run", "App.compute") in edge_pairs

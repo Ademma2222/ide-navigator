@@ -1,16 +1,10 @@
-"""
-Find All References + CodeLens identifier counting + References panel.
-Выделено из BaseLanguage: логика обхода identifier-узлов и извлечения сниппетов.
-"""
 from lsprotocol import types
-
 
 class ReferencesMixin:
     def find_references(
         self, source: str, line: int, character: int, include_declaration: bool = True,
         uri: str | None = None,
     ) -> list[types.Range]:
-        """Найти все вхождения идентификатора под курсором в файле."""
         tree = self._parse(source, uri)
 
         node = tree.root_node.descendant_for_point_range(
@@ -35,18 +29,12 @@ class ReferencesMixin:
     def _collect_identifiers(
         self, node, name: str, result: list[types.Range],
     ) -> None:
-        """Рекурсивный обход AST — собрать все узлы-идентификаторы с данным именем."""
         if "identifier" in node.type and node.text.decode("utf-8") == name:
             result.append(self._to_range(node))
         for child in node.children:
             self._collect_identifiers(child, name, result)
 
     def count_identifiers_by_name(self, source: str, uri: str | None = None) -> dict[str, int]:
-        """Один проход AST → частоты всех идентификаторов в файле.
-
-        Используется для CodeLens: вместо N отдельных find_references
-        (один полный обход дерева на каждый символ) получаем карту за один обход.
-        """
         tree = self._parse(source, uri)
         counts: dict[str, int] = {}
         stack = [tree.root_node]
@@ -63,11 +51,6 @@ class ReferencesMixin:
         self, source: str, line: int, character: int, include_declaration: bool = True,
         uri: str | None = None,
     ) -> dict | None:
-        """
-        Найти все референсы символа под курсором + извлечь строку-сниппет из
-        исходника для каждого вхождения. Используется кастомной командой
-        ide-navigator.references → Obsidian-style WebView-панель.
-        """
         tree = self._parse(source, uri)
 
         node = tree.root_node.descendant_for_point_range(

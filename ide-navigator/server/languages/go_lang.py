@@ -3,7 +3,6 @@ import tree_sitter_go as tsgo
 from lsprotocol import types
 from .base import BaseLanguage
 
-
 class GoLanguage(BaseLanguage):
 
     LANGUAGE_ID = "go"

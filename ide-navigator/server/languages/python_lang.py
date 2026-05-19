@@ -4,7 +4,6 @@ import tree_sitter_python as tspython
 from lsprotocol import types
 from .base import BaseLanguage
 
-
 class PythonLanguage(BaseLanguage):
 
     LANGUAGE_ID = "python"
@@ -13,21 +12,12 @@ class PythonLanguage(BaseLanguage):
         return Parser(Language(tspython.language()))
 
     def _extract_imports(self, root_node, uri: str) -> dict[str, tuple[Path | None, str]]:
-        """Извлечь Python-импорты и резолвить в пути файлов.
-
-        Поддерживает:
-          import foo              → foo → foo.py (рядом с текущим файлом)
-          from foo import bar     → bar → foo.py, символ bar
-          from .foo import bar    → bar → ./foo.py (relative), символ bar
-          from . import foo       → foo → ./__init__.py или ./foo.py
-        """
         current_path = self._uri_to_path(uri)
         current_dir = current_path.parent
         result: dict[str, tuple[Path | None, str]] = {}
 
         for child in root_node.children:
             if child.type == "import_statement":
-                # import foo / import foo as bar
                 for name_node in child.children:
                     if name_node.type == "dotted_name":
                         module_name = name_node.text.decode("utf-8")
@@ -46,11 +36,9 @@ class PythonLanguage(BaseLanguage):
                             result[local] = (resolved, parts[-1])
 
             elif child.type == "import_from_statement":
-                # from foo import bar / from .foo import bar
                 module_node = child.child_by_field_name("module_name")
                 module_text = module_node.text.decode("utf-8") if module_node else ""
 
-                # Считаем количество leading dots для relative imports
                 dots = 0
                 for c in child.children:
                     if c.type == "." or (c.type == "import_prefix" and c.text):
@@ -58,7 +46,6 @@ class PythonLanguage(BaseLanguage):
                         dots += text.count(".")
 
                 if dots > 0:
-                    # Relative import
                     base = current_dir
                     for _ in range(dots - 1):
                         base = base.parent
@@ -71,7 +58,6 @@ class PythonLanguage(BaseLanguage):
                     parts = module_text.split(".") if module_text else []
                     resolved = self._resolve_python_module(current_dir, parts)
 
-                # Собираем импортируемые имена
                 for c in child.children:
                     if c.type == "dotted_name" and c != module_node:
                         name = c.text.decode("utf-8")
@@ -88,20 +74,14 @@ class PythonLanguage(BaseLanguage):
 
     @staticmethod
     def _resolve_python_module(base_dir: Path, parts: list[str]) -> Path | None:
-        """Резолвить Python module path в файл.
-
-        Пробуем: base/part1/part2.py, base/part1/part2/__init__.py
-        """
         if not parts:
             init = base_dir / "__init__.py"
             return init if init.exists() else None
 
-        # base/a/b/c.py
         file_path = base_dir / "/".join(parts[:-1]) / (parts[-1] + ".py") if len(parts) > 1 else base_dir / (parts[0] + ".py")
         if file_path.exists():
             return file_path
 
-        # base/a/b/c/__init__.py
         pkg_path = base_dir / "/".join(parts) / "__init__.py"
         if pkg_path.exists():
             return pkg_path
@@ -141,7 +121,6 @@ class PythonLanguage(BaseLanguage):
                     ))
 
             elif child.type == "expression_statement" and not inside_class:
-                # module → expression_statement → assignment (MY_CONST = 42)
                 assign = next((c for c in child.children if c.type == "assignment"), None)
                 if assign:
                     left = assign.child_by_field_name("left")
@@ -154,10 +133,6 @@ class PythonLanguage(BaseLanguage):
                         ))
 
             elif child.type in ("module", "block", "decorated_definition"):
-                # decorated_definition: @decorator ... def foo() — внутри лежит
-                # function_definition или class_definition, которое нужно
-                # обработать тем же проходом. Без этого @property / @staticmethod
-                # / @app.route-функции не попадают в Outline и Call Graph.
                 symbols.extend(self._extract_symbols(child, inside_class))
 
         return symbols

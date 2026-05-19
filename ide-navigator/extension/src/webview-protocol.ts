@@ -1,8 +1,3 @@
-// Типизированный протокол сообщений между расширением и WebView-панелями.
-// Используется обеими сторонами (host + webview-скрипты), чтобы опечатки
-// в command-строках и пропущенные поля ловились компилятором, а не в рантайме.
-
-// ── Call Graph ────────────────────────────────────────────────────────────
 
 export interface GraphNode {
     id: string;
@@ -34,17 +29,13 @@ export interface ExportPayload {
     dataUrl?: string;
 }
 
-// Входящее (webview → host)
 export type CallGraphInbound =
     | { command: 'openNode'; line: number; character: number; endCharacter?: number }
     | { command: 'exportGraph'; payload: ExportPayload };
 
-// Исходящее (host → webview)
 export type CallGraphOutbound =
     | { command: 'init'; data: GraphData }
     | { command: 'refresh'; data: GraphData };
-
-// ── References panel ─────────────────────────────────────────────────────
 
 export interface ReferenceItem {
     line: number;

@@ -1,7 +1,3 @@
-// References panel webview logic.
-// Данные приходят от расширения через postMessage({command:'init', data, fileName}).
-// Благодаря postMessage больше не нужно инжектировать JSON в HTML и экранировать
-// `</script>` / U+2028/9 — structured clone не допускает XSS через сниппеты.
 
 (function () {
     'use strict';
@@ -35,11 +31,6 @@
                 highlighted = escapeHtml(ref.snippet);
             }
 
-            // line-num + code building: innerHTML из highlighted безопасен —
-            // hljs возвращает строку с тегами <span class="hljs-*">, которые
-            // он сам сгенерировал по escape-правилам. Исходный ref.snippet
-            // в try-блоке проходит через hljs.highlight; в catch — через
-            // ручной escapeHtml.
             const lineNum = document.createElement('span');
             lineNum.className = 'line-num';
             lineNum.textContent = String(ref.line + 1);

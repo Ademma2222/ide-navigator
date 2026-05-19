@@ -1,14 +1,6 @@
-"""
-Call Graph — построение графа вызовов + цикломатическая сложность по McCabe.
-Включает AST-хелперы для распознавания class/function/method definitions
-и call-expressions — они универсальны для большинства языков и могут быть
-переопределены в наследниках (C++ делает это для declarator-nesting).
-"""
 from lsprotocol import types
 
-
 class CallGraphMixin:
-    # Маппинг SymbolKind → строковый тип для графа
     _GRAPH_KIND_MAP = {
         types.SymbolKind.Function: "function",
         types.SymbolKind.Method: "method",
@@ -18,57 +10,26 @@ class CallGraphMixin:
         types.SymbolKind.Struct: "struct",
     }
 
-    # Белый список допустимых типов в графе — всё что не в списке → "function".
-    # Защищает WebView от инъекций: даже если tree-sitter выдаст экзотический
-    # node.type, в JSON попадёт только безопасное значение.
     _GRAPH_ALLOWED_TYPES = frozenset({
         "function", "method", "constructor", "class", "interface", "struct",
     })
 
-    # Максимальная длина идентификатора — защита от DoS и мусора в UI.
     _GRAPH_MAX_LABEL_LEN = 120
 
-    # Узлы tree-sitter, считающиеся точками ветвления для цикломатической
-    # сложности по McCabe (упрощённая формула: 1 + число branch points).
-    #
-    # Ключевые слова-токены (if, for, while и т.п.) НЕ включаем — tree-sitter
-    # кладёт их как детей statement-узла и мы бы двойным счётом ловили каждое
-    # ветвление. Считаем только структурные узлы: *_statement / *_clause /
-    # *_expression (для тернарников). else_clause не считается — это
-    # fallthrough-ветка, она не добавляет путь по McCabe.
     _BRANCH_NODE_TYPES = frozenset({
-        # if / elif
         "if_statement", "elif_clause",
-        # Циклы
         "for_statement", "for_in_statement", "for_of_statement",
         "for_range_loop",
         "while_statement", "do_statement", "do_while_statement",
-        # switch / case — считаем ТОЛЬКО cases, сам switch не добавляет путь
-        # если в нём нет альтернатив (default без case = 1 путь).
         "case_statement", "case_clause", "switch_case",
-        "switch_block_statement_group",  # Java: обёртка над каждым case-блоком
+        "switch_block_statement_group",
         "expression_case", "type_case", "communication_case",
-        # Исключения (сам try/except не считаем — только handler-clause)
         "except_clause", "catch_clause",
-        # Тернарник
         "conditional_expression", "ternary_expression",
-        # Go select
         "select_statement",
     })
 
     def get_call_graph(self, source: str, uri: str | None = None) -> dict:
-        """Построить граф вызовов: какие функции вызывают какие.
-
-        Возвращает:
-          nodes: [{id, label, type, line, character, endLine, endCharacter, complexity}]
-            — id = FQN (Class.method), label = short name для отображения.
-            — координаты указывают на идентификатор (selection_range),
-              чтобы клик в webview открывал файл ровно на имени символа.
-            — complexity: cyclomatic complexity по McCabe (1 + число ветвлений).
-          edges: [{from, to, kind}]
-            — kind="call" (вызов функции/метода) или "contains"
-              (класс → его метод/конструктор).
-        """
         tree = self._parse(source, uri)
         root = tree.root_node
 
@@ -139,7 +100,6 @@ class CallGraphMixin:
         self, symbols: list[types.DocumentSymbol], edges: set[tuple[str, str]],
         prefix: str = "",
     ) -> None:
-        """Добавить рёбра класс → его методы/конструкторы (FQN)."""
         for s in symbols:
             fqn = f"{prefix}.{s.name}" if prefix else s.name
             if s.kind in (types.SymbolKind.Class, types.SymbolKind.Interface,
@@ -156,7 +116,6 @@ class CallGraphMixin:
         self, symbols: list[types.DocumentSymbol], result: dict[str, dict],
         prefix: str = "",
     ) -> None:
-        """Собрать все символы с FQN-ключами, типами и позициями."""
         for s in symbols:
             fqn = f"{prefix}.{s.name}" if prefix else s.name
             kind_str = self._GRAPH_KIND_MAP.get(s.kind)
@@ -173,7 +132,6 @@ class CallGraphMixin:
         self, symbols: list[types.DocumentSymbol], result: set[str],
         prefix: str = "",
     ) -> None:
-        """Собрать FQN функций и методов из дерева символов."""
         for s in symbols:
             fqn = f"{prefix}.{s.name}" if prefix else s.name
             if s.kind in (types.SymbolKind.Function, types.SymbolKind.Method,
@@ -184,11 +142,6 @@ class CallGraphMixin:
 
     def _collect_complexity(self, root, result: dict[str, int],
                             scope: str = "") -> None:
-        """
-        Обход AST: для каждого определения функции/метода/конструктора считаем
-        цикломатическую сложность по McCabe = 1 + число узлов-ветвлений в теле.
-        Результат — mapping FQN → сложность.
-        """
         stack: list[tuple] = [(root, scope)]
         while stack:
             node, cur_scope = stack.pop()
@@ -208,7 +161,6 @@ class CallGraphMixin:
                     stack.append((child, child_scope))
 
     def _compute_complexity(self, func_node) -> int:
-        """Посчитать цикломатическую сложность одного узла-функции."""
         count = 1
         stack = [func_node]
         while stack:
@@ -225,7 +177,6 @@ class CallGraphMixin:
         short_to_fqn: dict[str, list[str]] | None = None,
         scope: str = "",
     ) -> None:
-        """Рекурсивный обход AST: отслеживать текущую функцию (FQN), собирать вызовы."""
         func_name = self._get_func_def_name(node)
         cls_name = self._get_class_def_name(node) if func_name is None else None
 
@@ -250,11 +201,10 @@ class CallGraphMixin:
             self._walk_calls(child, current_func, known, edges, short_to_fqn, scope)
 
     def _get_class_def_name(self, node) -> str | None:
-        """Если узел — определение класса/интерфейса/структуры, вернуть имя."""
         if node.type in (
             "class_definition", "class_declaration",
             "interface_declaration", "struct_specifier",
-            "type_spec",  # Go struct
+            "type_spec",
         ):
             name_node = node.child_by_field_name("name")
             if name_node:
@@ -262,7 +212,6 @@ class CallGraphMixin:
         return None
 
     def _get_func_def_name(self, node) -> str | None:
-        """Если узел — определение функции/метода, вернуть имя. Иначе None."""
         if node.type in (
             "function_definition", "function_declaration",
             "method_definition", "method_declaration",
@@ -274,11 +223,6 @@ class CallGraphMixin:
         return None
 
     def _find_func_node_at(self, root, line: int, character: int):
-        """Найти AST-узел функции/метода, у которого имя начинается в (line, character).
-
-        Используется для дешёвого hover-lookup сложности одной функции,
-        без обхода всего файла.
-        """
         node = root.descendant_for_point_range((line, character), (line, character))
         while node is not None:
             if self._get_func_def_name(node) is not None:
@@ -287,7 +231,6 @@ class CallGraphMixin:
         return None
 
     def _get_call_name(self, node) -> str | None:
-        """Если узел — вызов функции, вернуть имя вызываемой функции."""
         if node.type not in ("call", "call_expression", "method_invocation"):
             return None
 

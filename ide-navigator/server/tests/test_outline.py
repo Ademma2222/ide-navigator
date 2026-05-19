@@ -1,8 +1,3 @@
-"""
-Unit tests for Document Outline — один тест на язык.
-Проверяем что `get_symbols()` возвращает корректный набор классов, функций,
-методов и переменных для эталонного фрагмента кода.
-"""
 import pytest
 from lsprotocol import types
 
@@ -13,16 +8,13 @@ from languages.go_lang import GoLanguage
 from languages.javascript_lang import JavaScriptLanguage
 from languages.typescript_lang import TypeScriptLanguage
 
-
 def _names(symbols) -> set[str]:
-    """Рекурсивно собрать имена всех символов в дереве."""
     out = set()
     for s in symbols:
         out.add(s.name)
         if s.children:
             out.update(_names(s.children))
     return out
-
 
 def _find(symbols, name):
     for s in symbols:
@@ -33,9 +25,6 @@ def _find(symbols, name):
             if found:
                 return found
     return None
-
-
-# ── Python ────────────────────────────────────────────────────────────
 
 PYTHON_SRC = '''\
 MY_CONST = 42
@@ -50,7 +39,6 @@ class Greeter:
     def greet(self):
         return f"Hello, {self.name}"
 '''
-
 
 def test_python_outline():
     lang = PythonLanguage()
@@ -70,9 +58,6 @@ def test_python_outline():
     assert greet is not None
     assert greet.kind == types.SymbolKind.Method
 
-
-# ── Java ──────────────────────────────────────────────────────────────
-
 JAVA_SRC = '''\
 public class Calculator {
     private int value;
@@ -87,7 +72,6 @@ public class Calculator {
 }
 '''
 
-
 def test_java_outline():
     lang = JavaLanguage()
     symbols = lang.get_symbols(JAVA_SRC)
@@ -99,9 +83,6 @@ def test_java_outline():
     cls = _find(symbols, "Calculator")
     assert cls is not None
     assert cls.kind == types.SymbolKind.Class
-
-
-# ── C++ ───────────────────────────────────────────────────────────────
 
 CPP_SRC = '''\
 #include <string>
@@ -119,7 +100,6 @@ private:
 };
 '''
 
-
 def test_cpp_outline():
     lang = CppLanguage()
     symbols = lang.get_symbols(CPP_SRC)
@@ -127,9 +107,6 @@ def test_cpp_outline():
 
     assert "add" in names
     assert "Point" in names
-
-
-# ── Go ────────────────────────────────────────────────────────────────
 
 GO_SRC = '''\
 package main
@@ -152,7 +129,6 @@ func main() {
 }
 '''
 
-
 def test_go_outline():
     lang = GoLanguage()
     symbols = lang.get_symbols(GO_SRC)
@@ -163,9 +139,6 @@ def test_go_outline():
     assert "Greet" in names
     assert "MaxSize" in names
     assert "counter" in names
-
-
-# ── JavaScript ────────────────────────────────────────────────────────
 
 JS_SRC = '''\
 const PI = 3.14;
@@ -187,7 +160,6 @@ class Animal {
 }
 '''
 
-
 def test_javascript_outline():
     lang = JavaScriptLanguage()
     symbols = lang.get_symbols(JS_SRC)
@@ -199,9 +171,6 @@ def test_javascript_outline():
     assert "speak" in names
     assert "PI" in names
     assert "count" in names
-
-
-# ── TypeScript ────────────────────────────────────────────────────────
 
 TS_SRC = '''\
 interface Shape {
@@ -228,7 +197,6 @@ function compute(): number {
 }
 '''
 
-
 def test_typescript_outline():
     lang = TypeScriptLanguage()
     symbols = lang.get_symbols(TS_SRC)
@@ -240,19 +208,12 @@ def test_typescript_outline():
     assert "area" in names
     assert "compute" in names
 
-
-# ── Edge cases ────────────────────────────────────────────────────────
-
 def test_empty_source_returns_empty():
     lang = PythonLanguage()
     assert lang.get_symbols("") == []
 
-
 def test_broken_python_does_not_crash():
-    """Битый исходник не должен крашить парсер — tree-sitter устойчив к ошибкам."""
     lang = PythonLanguage()
-    # Незакрытая скобка, отсутствующий двоеточие — tree-sitter всё равно парсит что сможет
     src = "def broken(\nclass X\n    pass"
-    # Главное — без исключений
     symbols = lang.get_symbols(src)
     assert isinstance(symbols, list)

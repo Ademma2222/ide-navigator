@@ -1,7 +1,3 @@
-"""
-Pytest configuration: adds `server/` to sys.path so tests can import
-`languages.python_lang` etc. without installing the server as a package.
-"""
 import sys
 from pathlib import Path
 

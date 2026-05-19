@@ -13,9 +13,6 @@ import type {
     ReferencesInbound,
 } from './webview-protocol';
 
-// Рендер HTML для WebView-панели: читаем шаблон из media/, подставляем
-// cspSource и URI ассетов. Всё инлайновое содержимое вынесено в media/*,
-// поэтому CSP больше не требует 'unsafe-inline' для скриптов.
 function renderWebview(
     panel: vscode.WebviewPanel,
     context: vscode.ExtensionContext,
@@ -34,7 +31,10 @@ function renderWebview(
     panel.webview.html = template
         .replace(/__CSP_SOURCE__/g, panel.webview.cspSource)
         .replace(/__CSS_URI__/g, mediaUri(cssFile).toString())
-        .replace(/__JS_URI__/g, mediaUri(jsFile).toString());
+        .replace(/__JS_URI__/g, mediaUri(jsFile).toString())
+        .replace(/__VIS_URI__/g, mediaUri('vis-network.min.js').toString())
+        .replace(/__HL_JS_URI__/g, mediaUri('highlight.min.js').toString())
+        .replace(/__HL_CSS_URI__/g, mediaUri('atom-one-dark.min.css').toString());
 }
 
 let client: LanguageClient;
@@ -47,13 +47,12 @@ function setStatus(text: string, tooltip?: string) {
 }
 
 export function activate(context: vscode.ExtensionContext) {
-    // Status bar: единый индикатор состояния плагина
+    
     statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
     statusBar.command = 'ide-navigator.showCallGraph';
     setStatus('IDE Navigator: starting…', 'Запускается Python LSP сервер');
     context.subscriptions.push(statusBar);
 
-    // Настройки из VS Code (раздел ideNavigator.*)
     const config = vscode.workspace.getConfiguration('ideNavigator');
     const initializationOptions = {
         logLevel: config.get<string>('logLevel', 'info'),
@@ -61,8 +60,6 @@ export function activate(context: vscode.ExtensionContext) {
         enableCallGraph: config.get<boolean>('enableCallGraph', true),
     };
 
-    // Путь к бандленому серверу внутри расширения (bundled/server/<target>/…).
-    // Таргет соответствует vsce --target: win32-x64, darwin-arm64.
     const target = `${process.platform}-${process.arch}`;
     const binaryName = process.platform === 'win32'
         ? 'ide-navigator-server.exe'
@@ -74,8 +71,6 @@ export function activate(context: vscode.ExtensionContext) {
     console.log('IDE Navigator: target  =', target);
     console.log('IDE Navigator: binary  =', serverBinary);
 
-    // На Mac/Linux .vsix-zip может потерять exec-бит при распаковке VS Code.
-    // Ставим его руками перед запуском (no-op на Windows).
     if (process.platform !== 'win32') {
         try {
             fs.chmodSync(serverBinary, 0o755);
@@ -84,13 +79,11 @@ export function activate(context: vscode.ExtensionContext) {
         }
     }
 
-    // Настройки запуска сервера (standalone бинарь, без Python)
     const serverOptions: ServerOptions = {
         command: serverBinary,
         args: []
     };
 
-    // Языки которые обрабатывает плагин
     const clientOptions: LanguageClientOptions = {
         documentSelector: [
             { scheme: 'file', language: 'python' },
@@ -105,7 +98,6 @@ export function activate(context: vscode.ExtensionContext) {
         initializationOptions,
     };
 
-    // Создаём и запускаем LSP клиент
     client = new LanguageClient(
         'ide-navigator',
         'IDE Navigator',
@@ -122,7 +114,6 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showErrorMessage(`IDE Navigator: ошибка — ${err.message}`);
     });
 
-    // Команда для открытия графа вызовов
     const showCallGraph = vscode.commands.registerCommand(
         'ide-navigator.showCallGraph',
         async () => {
@@ -172,19 +163,13 @@ export function activate(context: vscode.ExtensionContext) {
             );
 
             renderWebview(panel, context, 'callGraph.html', 'callGraph.css', 'callGraph.js');
-            // Данные шлём через postMessage вместо инъекции в HTML —
-            // structured clone защищает от XSS через имена символов.
+            
             panel.webview.postMessage({ command: 'init', data: graphData });
 
-            // Клик / двойной клик по вершине → открыть файл на определении.
-            // Сервер уже положил line/character/endCharacter в каждый node
-            // (selection_range идентификатора), поэтому курсор встанет ровно
-            // на имя символа.
             panel.webview.onDidReceiveMessage(
                 async (message: CallGraphInbound | { command: 'ready' }) => {
                     if (message.command === 'ready') {
-                        // Webview подгрузился; init уже отправлен выше, но на случай
-                        // пропущенного сообщения — повторяем.
+                        
                         panel.webview.postMessage({ command: 'init', data: graphData });
                         return;
                     }
@@ -245,16 +230,13 @@ export function activate(context: vscode.ExtensionContext) {
                 context.subscriptions,
             );
 
-            // Live-refresh: при изменении исходного файла перезапрашиваем граф.
-            // Debounce 1500ms — иначе при быстрой печати на большом файле
-            // граф пересчитывается каждые полсекунды и подтормаживает UI.
             let refreshTimer: ReturnType<typeof setTimeout> | undefined;
             let refreshing = false;
             const changeListener = vscode.workspace.onDidChangeTextDocument((e) => {
                 if (e.document.uri.toString() !== uri) return;
                 if (refreshTimer) clearTimeout(refreshTimer);
                 refreshTimer = setTimeout(async () => {
-                    if (refreshing) return;  // пропускаем, если предыдущий ещё идёт
+                    if (refreshing) return;  
                     refreshing = true;
                     try {
                         const fresh: GraphData = await client.sendRequest('workspace/executeCommand', {
@@ -262,7 +244,7 @@ export function activate(context: vscode.ExtensionContext) {
                             arguments: [uri]
                         });
                         panel.webview.postMessage({ command: 'refresh', data: fresh });
-                    } catch (_) { /* ignore refresh errors */ } finally {
+                    } catch (_) {  } finally {
                         refreshing = false;
                     }
                 }, 1500);
@@ -276,10 +258,6 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(showCallGraph);
 
-    // Команда для открытия панели референсов.
-    // Может быть вызвана двумя способами:
-    //   1. Из CodeLens — сервер передаёт (uri, line, character)
-    //   2. Из кнопки/курсора — аргументов нет, берём из activeTextEditor
     const showReferences = vscode.commands.registerCommand(
         'ide-navigator.showReferences',
         async (argUri?: string, argLine?: number, argChar?: number) => {
@@ -338,8 +316,7 @@ export function activate(context: vscode.ExtensionContext) {
                         return;
                     }
                     if (message.command !== 'openReference' || !data) return;
-                    // Валидируем сообщение из webview: без этих проверок
-                    // кривое сообщение уронило бы расширение на new Position().
+                    
                     if (typeof message.line !== 'number' ||
                         typeof message.character !== 'number') {
                         return;
@@ -371,5 +348,4 @@ export function deactivate(): Thenable<void> | undefined {
     if (!client) return undefined;
     return client.stop();
 }
-
 

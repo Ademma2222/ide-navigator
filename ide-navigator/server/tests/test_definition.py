@@ -1,8 +1,3 @@
-"""
-Unit tests for Go to Definition.
-Для каждого языка: позиция курсора на использовании символа должна
-возвращать Range определения.
-"""
 from lsprotocol import types
 
 from languages.python_lang import PythonLanguage
@@ -10,12 +5,7 @@ from languages.java_lang import JavaLanguage
 from languages.go_lang import GoLanguage
 from languages.typescript_lang import TypeScriptLanguage
 
-
 def _find_position(source: str, token: str, occurrence: int = 0) -> tuple[int, int]:
-    """
-    Найти (line, character) N-го вхождения токена в исходнике.
-    Нужно чтобы тесты не зависели от хардкода позиций.
-    """
     seen = 0
     for line_idx, line in enumerate(source.splitlines()):
         start = 0
@@ -29,9 +19,6 @@ def _find_position(source: str, token: str, occurrence: int = 0) -> tuple[int, i
             start = idx + 1
     raise AssertionError(f"token {token!r} occurrence #{occurrence} not found")
 
-
-# ── Python ────────────────────────────────────────────────────────────
-
 def test_python_definition_function():
     src = (
         "def helper():\n"
@@ -41,14 +28,11 @@ def test_python_definition_function():
         "    x = helper()\n"
     )
     lang = PythonLanguage()
-    # Курсор на "helper" внутри main() — это вызов
     call_line, call_char = _find_position(src, "helper", occurrence=1)
     result = lang.find_definition(src, call_line, call_char + 1)
 
     assert result is not None
-    # Определение — на строке 0
     assert result.start.line == 0
-
 
 def test_python_definition_class():
     src = (
@@ -65,17 +49,11 @@ def test_python_definition_class():
     assert result is not None
     assert result.start.line == 0
 
-
 def test_python_definition_not_found():
-    """Курсор не на идентификаторе → None."""
     src = "x = 1 + 2\n"
     lang = PythonLanguage()
-    # Курсор на "+"
     result = lang.find_definition(src, 0, 6)
     assert result is None
-
-
-# ── Java ──────────────────────────────────────────────────────────────
 
 def test_java_definition_method():
     src = (
@@ -85,15 +63,10 @@ def test_java_definition_method():
         "}\n"
     )
     lang = JavaLanguage()
-    # Вызов compute() внутри run
     call_line, call_char = _find_position(src, "compute", occurrence=1)
     result = lang.find_definition(src, call_line, call_char + 1)
     assert result is not None
-    # Определение compute — строка 1
     assert result.start.line == 1
-
-
-# ── Go ────────────────────────────────────────────────────────────────
 
 def test_go_definition_type():
     src = (
@@ -108,14 +81,10 @@ def test_go_definition_type():
         "}\n"
     )
     lang = GoLanguage()
-    # Вхождение User в сигнатуре make — вторая occurrence (0 — тип)
     call_line, call_char = _find_position(src, "User", occurrence=1)
     result = lang.find_definition(src, call_line, call_char + 1)
     assert result is not None
     assert result.start.line == 2
-
-
-# ── TypeScript ────────────────────────────────────────────────────────
 
 def test_typescript_definition_interface():
     src = (

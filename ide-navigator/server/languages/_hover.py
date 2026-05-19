@@ -1,11 +1,6 @@
-"""
-Hover Info — tooltip с типом символа, сигнатурой и цикломатической сложностью.
-"""
 from lsprotocol import types
 
-
 class HoverMixin:
-    # Маппинг SymbolKind → человекочитаемое название
     _KIND_LABELS = {
         types.SymbolKind.Function: "function",
         types.SymbolKind.Method: "method",
@@ -21,7 +16,6 @@ class HoverMixin:
     }
 
     def get_hover(self, source: str, line: int, character: int, uri: str | None = None) -> types.Hover | None:
-        """Информация о символе при наведении курсора."""
         tree = self._parse(source, uri)
 
         node = tree.root_node.descendant_for_point_range(
@@ -43,9 +37,6 @@ class HoverMixin:
         lines = source.splitlines()
         signature = lines[decl_line].strip() if decl_line < len(lines) else name
 
-        # Цикломатическая сложность (для функций/методов/конструкторов).
-        # Ищем AST-узел функции в точке декларации и считаем только его сложность,
-        # чтобы не обходить весь файл на каждый hover (на больших файлах → тормоза).
         complexity_str = ""
         if found.kind in (types.SymbolKind.Function, types.SymbolKind.Method,
                           types.SymbolKind.Constructor):

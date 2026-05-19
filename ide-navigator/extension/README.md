@@ -17,7 +17,7 @@ The extension bundles a standalone LSP server — **no Python required**. Instal
 
 ## Installation
 
-Download the `.vsix` file for your platform from the [latest release](https://github.com/Ademma2222/ide-navigator/releases/latest):
+Download the `.vsix` file for your platform from the [latest release](https://github.com/Ademma2222/ide_navigator/releases/latest):
 
 - **Windows x64:** `ide-navigator-win32-x64-*.vsix`
 - **macOS Apple Silicon:** `ide-navigator-darwin-arm64-*.vsix`

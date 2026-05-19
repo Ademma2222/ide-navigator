@@ -2,17 +2,17 @@
   "name": "ide-navigator",
   "displayName": "IDE Navigator",
   "description": "Multi-language static-analysis navigation: Outline, Go to Definition, References, Hover, Workspace Symbols, Call Graph. Zero setup — bundled LSP server.",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "publisher": "hvn",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Ademma2222/ide-navigator.git"
+    "url": "https://github.com/Ademma2222/ide_navigator.git"
   },
   "bugs": {
-    "url": "https://github.com/Ademma2222/ide-navigator/issues"
+    "url": "https://github.com/Ademma2222/ide_navigator/issues"
   },
-  "homepage": "https://github.com/Ademma2222/ide-navigator#readme",
+  "homepage": "https://github.com/Ademma2222/ide_navigator#readme",
   "keywords": [
     "lsp",
     "tree-sitter",

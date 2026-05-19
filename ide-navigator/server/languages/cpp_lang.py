@@ -3,7 +3,6 @@ import tree_sitter_cpp as tscpp
 from lsprotocol import types
 from .base import BaseLanguage
 
-
 class CppLanguage(BaseLanguage):
 
     LANGUAGE_ID = "cpp"
@@ -60,7 +59,6 @@ class CppLanguage(BaseLanguage):
         return symbols
 
     def _get_func_def_name(self, node) -> str | None:
-        """C++: имя функции вложено в declarator → function_declarator → declarator."""
         if node.type == "function_definition":
             name_node = self._func_name(node)
             if name_node:
@@ -68,7 +66,6 @@ class CppLanguage(BaseLanguage):
         return None
 
     def _func_name(self, func_node):
-        """C++ function name: function_definition → declarator(function_declarator) → declarator(identifier)."""
         declarator = func_node.child_by_field_name("declarator")
         if declarator and declarator.type == "function_declarator":
             inner = declarator.child_by_field_name("declarator")
